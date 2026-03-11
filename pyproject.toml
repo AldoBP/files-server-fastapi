@@ -42,5 +42,3 @@ Issues = "https://github.com/AldoBP/files-server-fastapi/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/files_server_fastapi"]
 
-[tool.uv]
-dev-dependencies = []
