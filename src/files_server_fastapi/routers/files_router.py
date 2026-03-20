@@ -1,11 +1,113 @@
 import os
 import mimetypes
 from fastapi.responses import FileResponse
-from fastapi import APIRouter, HTTPException
+from typing import Annotated
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 from datetime import datetime
 from pydantic import BaseModel
+from pgsqlasync2fast_fastapi.dependencies import get_db_session
+from oauth2fast_fastapi import get_current_user, User
+from files_server_fastapi.models.permisos_model import User_Ruta_Access
+from files_server_fastapi.models.rutas_model import Rutas
+from files_server_fastapi.models.users_extend_model import Users_extend
+from files_server_fastapi.models.area_model import Area
+from files_server_fastapi.models.rol_model import Rol
 
 router = APIRouter(prefix="/files", tags=["Archivos del Sistema"])
+
+# ==========================================
+# RUTINA DE VALIDACIÓN DE PERMISOS (ACL)
+# ==========================================
+async def check_folder_access(
+    area: str,
+    subpath: str = "/",
+    required_access: str = "allow_read",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Verifica si el usuario actual tiene acceso al área y subpath indicados.
+    required_access: 'allow_read' (por defecto) o 'allow_write'
+    """
+    # 1. Obtener la jerarquía Area -> Rol del usuario
+    result_ext = await db.execute(
+        select(Users_extend)
+        .where(Users_extend.user_id == current_user.id)
+    )
+    user_exts = result_ext.scalars().all()
+    
+    # Buscar si tiene acceso al área solicitada
+    area_obj = None
+    user_ext_match = None
+    for ext in user_exts:
+        res_area = await db.execute(select(Area).where(Area.id == ext.area_id))
+        a = res_area.scalars().first()
+        if a and a.area_name.upper() == area.upper():
+            area_obj = a
+            user_ext_match = ext
+            break
+            
+    if not area_obj or not user_ext_match:
+        raise HTTPException(status_code=403, detail="No perteneces a esta área")
+        
+    # Obtener su Rol Base en esta área
+    res_rol = await db.execute(select(Rol).where(Rol.id == user_ext_match.rol_id))
+    rol_obj = res_rol.scalars().first()
+    rol_name = rol_obj.role_name.lower() if rol_obj else ""
+    
+    # 2. Verificar ACL específico para la ruta y sus padres (Herencia)
+    # Construir la ruta lógica para buscar en BD
+    logical_path = f"/{area.upper()}/{subpath.strip('/')}".replace("//", "/")
+    
+    # Generar todos los paths desde el más profundo hasta el superior
+    # Ej: /AREA/FOLDER/SUB -> ['/AREA/FOLDER/SUB', '/AREA/FOLDER', '/AREA']
+    parts = logical_path.strip("/").split("/")
+    paths_to_check = []
+    current_path = ""
+    for part in parts:
+        if part:
+            current_path += f"/{part}"
+            paths_to_check.append(current_path)
+            
+    # Ordenar del más largo al más corto para evaluar el más específico primero
+    paths_to_check.reverse()
+    
+    # Obtener todas las rutas y posibles excepciones en una sola consulta
+    res_acl = await db.execute(
+        select(Rutas.ruta, User_Ruta_Access)
+        .join(User_Ruta_Access, User_Ruta_Access.ruta_id == Rutas.id)
+        .where(Rutas.ruta.in_(paths_to_check))
+        .where(User_Ruta_Access.user_id == current_user.id)
+    )
+    acls_encontrados = {row[0]: row[1] for row in res_acl.all()}
+    
+    for path_in_tree in paths_to_check:
+        if path_in_tree in acls_encontrados:
+            acl_obj = acls_encontrados[path_in_tree]
+            
+            if acl_obj.access_type == "deny_all":
+                raise HTTPException(status_code=403, detail="Acceso denegado a esta carpeta o heredado de una superior")
+                
+            if required_access == "allow_write":
+                if acl_obj.access_type == "allow_write":
+                    return True # Excepción le permite escribir
+                elif acl_obj.access_type == "allow_read":
+                    raise HTTPException(status_code=403, detail="Solo tienes permiso de lectura (regla heredada)")
+                    
+            if required_access == "allow_read":
+                if acl_obj.access_type in ["allow_read", "allow_write"]:
+                    return True
+    
+    # 3. Si no hay excepción ACL, aplicar reglas de Rol Base
+    if required_access == "allow_write":
+        if "editor" not in rol_name and "admin" not in rol_name:
+            raise HTTPException(status_code=403, detail="Tu rol no permite modificar esta carpeta")
+            
+    # Si es allow_read, cualquier rol del área (viewer, editor, admin) puede leer por defecto
+    return True
+
 
 # Directorio maestro (La ruta de red de Samba vista desde Windows)
 BASE_DIR = r"\\192.168.1.122\Compartido"
@@ -16,7 +118,11 @@ BASE_DIR = r"\\192.168.1.122\Compartido"
 # ==========================================
 
 @router.get("/list", summary="Listar archivos de una carpeta")
-async def list_directory(area: str, subpath: str = "/"):
+async def list_directory(
+    area: str, 
+    subpath: str = "/", 
+    has_access: bool = Depends(check_folder_access)
+):
     """Devuelve el contenido de una carpeta dentro del area indicada."""
     if ".." in subpath:
         raise HTTPException(status_code=400, detail="Ruta inválida")
@@ -78,7 +184,13 @@ class FolderCreate(BaseModel):
 
 
 @router.post("/folder", summary="Crear una nueva carpeta en el servidor")
-async def create_folder(req: FolderCreate):
+async def create_folder(
+    req: FolderCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session)
+):
+    # Validar permisos de escritura manualmente ya que los argumentos vienen en el body
+    await check_folder_access(area=req.area, subpath=req.subpath, required_access="allow_write", current_user=current_user, db=db)
     if ".." in req.subpath or ".." in req.folder_name or "/" in req.folder_name:
         raise HTTPException(status_code=400, detail="Nombre de carpeta o ruta inválida")
 
@@ -112,7 +224,11 @@ async def upload_file(
     area: str = Form(...),
     subpath: str = Form(default="/"),
     file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session)
 ):
+    # Validar permisos de escritura
+    await check_folder_access(area=area, subpath=subpath, required_access="allow_write", current_user=current_user, db=db)
     """
     Sube un archivo (Word, PDF, imagen, etc.) a la carpeta indicada dentro del share Samba.
 
@@ -211,7 +327,12 @@ OFFICE_PROTOCOLS = {
 
 
 @router.get("/open-url", summary="Obtener URL para abrir un archivo en la app local (Office, etc.)")
-async def get_open_url(area: str, filename: str, subpath: str = "/"):
+async def get_open_url(
+    area: str, 
+    filename: str, 
+    subpath: str = "/",
+    has_access: bool = Depends(check_folder_access)
+):
     """
     Devuelve la URL de protocolo adecuada para abrir el archivo directamente
     en la aplicación instalada en la PC del usuario.
@@ -283,7 +404,12 @@ INLINE_MIME_TYPES = {
 
 
 @router.get("/download", summary="Descargar o visualizar un archivo inline en el navegador")
-async def download_file(area: str, filename: str, subpath: str = "/"):
+async def download_file(
+    area: str, 
+    filename: str, 
+    subpath: str = "/",
+    has_access: bool = Depends(check_folder_access)
+):
     """
     Sirve un archivo desde el share Samba.
     - PDFs e imágenes se abren **inline** en el navegador.

@@ -19,6 +19,11 @@ async def get_users_extend(db: AsyncSession = Depends(get_db_session)):
     result = await db.execute(select(Users_extend))
     return result.scalars().all()
 
+@router.get("/by-area/{area_id}", response_model=list[Users_extend], summary="Obtener usuarios de un área")
+async def get_users_by_area(area_id: int, db: AsyncSession = Depends(get_db_session)):
+    result = await db.execute(select(Users_extend).where(Users_extend.area_id == area_id))
+    return result.scalars().all()
+
 # ==========================================
 # RUTA: Buscar Rol y Área por user_id
 # ==========================================

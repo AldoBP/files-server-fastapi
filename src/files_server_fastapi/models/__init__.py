@@ -2,7 +2,7 @@
 from .area_model import Area
 from .rol_model import Rol
 from .rutas_model import Rutas
-from .permisos_model import Permisos, Permiso_user, Permiso_rol
+from .permisos_model import Permisos, User_Ruta_Access, Permiso_rol
 from .users_extend_model import Users_extend
 
 __all__ = [
@@ -10,7 +10,7 @@ __all__ = [
     "Rol",
     "Rutas",
     "Permisos",
-    "Permiso_user",
+    "User_Ruta_Access",
     "Permiso_rol",
     "Users_extend",
 ]
