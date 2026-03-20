@@ -9,6 +9,5 @@ def get_utc_now():
 class Rol(AuthModel, table=True):
     __tablename__ = "rol"
     
-    id: Optional[int] = Field(default=None, primary_key=True)
     role_name: str = Field(nullable=False)
     description: Optional[str] = Field(default=None)

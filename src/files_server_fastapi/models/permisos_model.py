@@ -6,8 +6,6 @@ from oauth2fast_fastapi import AuthModel
 class Permisos(AuthModel, table=True):
     __tablename__ = "permisos"
     
-    id: Optional[int] = Field(default=None, primary_key=True)
-    
     permiso_name: str = Field(nullable=False)
     description: Optional[str] = Field(default=None)
 
@@ -15,8 +13,6 @@ class Permisos(AuthModel, table=True):
 # Tabla ACL: Control de Acceso Granular por Usuario a una Ruta
 class User_Ruta_Access(AuthModel, table=True):
     __tablename__ = "user_ruta_access"
-    
-    id: Optional[int] = Field(default=None, primary_key=True)
     
     user_id: int = Field(foreign_key="users.id")
     ruta_id: int = Field(foreign_key="rutas.id")
@@ -28,8 +24,6 @@ class User_Ruta_Access(AuthModel, table=True):
 # Tabla intermedia: Permisos por Rol
 class Permiso_rol(AuthModel, table=True):
     __tablename__ = "permiso_rol"
-    
-    id: Optional[int] = Field(default=None, primary_key=True)
     
     id_rol: int = Field(foreign_key="rol.id")
     id_permiso: int = Field(foreign_key="permisos.id")

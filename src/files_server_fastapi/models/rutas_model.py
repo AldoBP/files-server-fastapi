@@ -5,8 +5,6 @@ from oauth2fast_fastapi import AuthModel
 class Rutas(AuthModel, table=True):
     __tablename__ = "rutas"
     
-    id: Optional[int] = Field(default=None, primary_key=True)
-    
     ruta: str = Field(nullable=False)
     name: str = Field(nullable=False)
     
