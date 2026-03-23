@@ -1,3 +1,4 @@
+from typing import Optional
 from sqlmodel import Field
 from oauth2fast_fastapi import AuthModel
 
@@ -9,3 +10,4 @@ class Users_extend(AuthModel, table=True):
     
     area_id: int = Field(foreign_key="area.id")
     rol_id: int = Field(foreign_key="rol.id")
+    puesto: Optional[str] = Field(default=None)
