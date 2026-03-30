@@ -21,14 +21,24 @@ async def check_folder_access(
     Verifica si el usuario actual tiene acceso al área y subpath indicados.
     required_access: 'allow_read' (por defecto) o 'allow_write'
     """
-    # 1. Obtener extensión de usuario y verificar pertenencia al área
+    # 1. Obtener extensión de usuario y verificar roles/áreas
     result_ext = await db.execute(
         select(Users_extend).where(Users_extend.user_id == current_user.id)
     )
     user_exts = result_ext.scalars().all()
+    
+    # 2. Verificar si el usuario es SUPER_ADMIN en cualquier área
+    for ext in user_exts:
+        res_rol = await db.execute(select(Rol).where(Rol.id == ext.rol_id))
+        rol = res_rol.scalars().first()
+        if rol and rol.role_name.upper() == "SUPER_ADMIN":
+            return True  # SUPER_ADMIN tiene acceso universal a todas las carpetas, salta otras validaciones.
 
+    # 3. Si no es SUPER_ADMIN, verificar pertenencia al área indicada
     area_obj = None
     user_ext_match = None
+    rol_name = ""
+    
     for ext in user_exts:
         res_area = await db.execute(select(Area).where(Area.id == ext.area_id))
         a = res_area.scalars().first()
@@ -40,7 +50,7 @@ async def check_folder_access(
     if not area_obj or not user_ext_match:
         raise HTTPException(status_code=403, detail="No perteneces a esta área")
 
-    # Obtener el Rol Base del usuario en esta área
+    # Obtener el Rol Base del usuario en ESTA área específica
     res_rol = await db.execute(select(Rol).where(Rol.id == user_ext_match.rol_id))
     rol_obj = res_rol.scalars().first()
     rol_name = rol_obj.role_name.lower() if rol_obj else ""

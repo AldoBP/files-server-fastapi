@@ -29,7 +29,7 @@ async def create_folder(
 
     safe_subpath = req.subpath.strip("/")
     ruta_final = os.path.join(BASE_DIR, req.area.upper(), safe_subpath, req.folder_name) if safe_subpath else os.path.join(BASE_DIR, req.area.upper(), req.folder_name)
-
+    print(ruta_final)
     try:
         os.makedirs(ruta_final, exist_ok=False)
         return {"message": "Carpeta creada exitosamente", "path": ruta_final}

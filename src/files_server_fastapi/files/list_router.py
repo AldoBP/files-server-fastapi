@@ -19,6 +19,7 @@ async def list_directory(
 
     safe_subpath = subpath.strip("/")
     ruta_real = os.path.join(BASE_DIR, area.upper(), safe_subpath) if safe_subpath else os.path.join(BASE_DIR, area.upper())
+    print(ruta_real)
 
     if not os.path.exists(ruta_real):
         return []
