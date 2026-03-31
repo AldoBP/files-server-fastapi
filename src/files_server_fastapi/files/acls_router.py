@@ -141,3 +141,40 @@ async def get_user_acls(
         })
 
     return {"shared_folders": shared_folders}
+
+@router.get("/acls/user/{user_id}", summary="Obtener los ACLs de un usuario específico")
+async def get_specific_user_acls(
+    user_id: int,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    Devuelve las reglas actuales de un usuario en un formato simple para el modal de React.
+    Ejemplo: {"/ruta/1": "EDITOR", "/ruta/2": "VIEWER"}
+    """
+    # 0. Traducir el ID que manda el frontend (users_extend.id) al verdadero user_id
+    ext_result = await db.execute(select(Users_extend).where(Users_extend.id == user_id))
+    user_ext_obj = ext_result.scalars().first()
+    
+    if not user_ext_obj:
+        raise HTTPException(status_code=404, detail=f"No se encontró ninguna extensión de usuario con el ID {user_id}.")
+
+    real_user_id = user_ext_obj.user_id
+
+    # 1. Consultar los ACLs en la base de datos
+    result = await db.execute(
+        select(Rutas.ruta, User_Ruta_Access.access_type)
+        .join(User_Ruta_Access, User_Ruta_Access.ruta_id == Rutas.id)
+        .where(User_Ruta_Access.user_id == real_user_id)
+    )
+    
+    # 2. Convertir al formato simple que espera el frontend
+    acls_dict = {}
+    for ruta, access_type in result.all():
+        if access_type == "allow_write":
+            acls_dict[ruta] = "EDITOR"
+        elif access_type == "allow_read":
+            acls_dict[ruta] = "VIEWER"
+        elif access_type == "deny_all":
+            acls_dict[ruta] = "DENIED"
+    
+    return acls_dict
