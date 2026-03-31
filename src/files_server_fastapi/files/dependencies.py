@@ -21,41 +21,37 @@ async def check_folder_access(
     Verifica si el usuario actual tiene acceso al área y subpath indicados.
     required_access: 'allow_read' (por defecto) o 'allow_write'
     """
-    # 1. Obtener extensión de usuario y verificar roles/áreas
+    # 1. Obtener extensiones de usuario y roles
     result_ext = await db.execute(
         select(Users_extend).where(Users_extend.user_id == current_user.id)
     )
     user_exts = result_ext.scalars().all()
-    
+
     # 2. Verificar si el usuario es SUPER_ADMIN en cualquier área
     for ext in user_exts:
         res_rol = await db.execute(select(Rol).where(Rol.id == ext.rol_id))
         rol = res_rol.scalars().first()
         if rol and rol.role_name.upper() == "SUPER_ADMIN":
-            return True  # SUPER_ADMIN tiene acceso universal a todas las carpetas, salta otras validaciones.
+            return True  # SUPER_ADMIN tiene acceso universal
 
-    # 3. Si no es SUPER_ADMIN, verificar pertenencia al área indicada
+    # 3. Identificar si el usuario pertenece al área solicitada
     area_obj = None
     user_ext_match = None
     rol_name = ""
-    
+
     for ext in user_exts:
         res_area = await db.execute(select(Area).where(Area.id == ext.area_id))
         a = res_area.scalars().first()
         if a and a.area_name.upper() == area.upper():
             area_obj = a
             user_ext_match = ext
+            # Obtener el Rol Base del usuario en ESTA área específica
+            res_rol = await db.execute(select(Rol).where(Rol.id == user_ext_match.rol_id))
+            rol_obj = res_rol.scalars().first()
+            rol_name = rol_obj.role_name.lower() if rol_obj else ""
             break
 
-    if not area_obj or not user_ext_match:
-        raise HTTPException(status_code=403, detail="No perteneces a esta área")
-
-    # Obtener el Rol Base del usuario en ESTA área específica
-    res_rol = await db.execute(select(Rol).where(Rol.id == user_ext_match.rol_id))
-    rol_obj = res_rol.scalars().first()
-    rol_name = rol_obj.role_name.lower() if rol_obj else ""
-
-    # 2. Verificar ACL específico por ruta y herencia de padres
+    # 4. Verificar ACL específico por ruta y herencia de padres
     logical_path = f"/{area.upper()}/{subpath.strip('/')}".replace("//", "/")
     parts = logical_path.strip("/").split("/")
     paths_to_check = []
@@ -65,7 +61,7 @@ async def check_folder_access(
             current_path += f"/{part}"
             paths_to_check.append(current_path)
 
-    paths_to_check.reverse()  # Más específico primero
+    paths_to_check.reverse()  # Más específico primero (del subpath hacia la raíz del área)
 
     res_acl = await db.execute(
         select(Rutas.ruta, User_Ruta_Access)
@@ -92,9 +88,16 @@ async def check_folder_access(
                 if acl_obj.access_type in ["allow_read", "allow_write"]:
                     return True
 
-    # 3. Sin ACL explícito → aplicar reglas del Rol Base
-    if required_access == "allow_write":
-        if "editor" not in rol_name and "admin" not in rol_name:
-            raise HTTPException(status_code=403, detail="Tu rol no permite modificar esta carpeta")
+    # 5. Si NO hay ACL explícito, verificar reglas por pertenencia al área
+    if user_ext_match:
+        if required_access == "allow_write":
+            if "editor" not in rol_name and "admin" not in rol_name:
+                raise HTTPException(status_code=403, detail="Tu rol no permite modificar esta carpeta")
+        # Si es allow_read y pertenece al área, se permite por defecto
+        return True
 
-    return True
+    # 6. Si no pertenece al área y no se encontró ningún ACL, denegar acceso
+    raise HTTPException(
+        status_code=403,
+        detail=f"No perteneces al área {area} ni tienes permisos específicos asignados para esta ruta."
+    )
