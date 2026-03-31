@@ -1,6 +1,6 @@
 import os
 from fastapi import APIRouter, HTTPException, Depends
-from files_server_fastapi.files.constants import BASE_DIR, OFFICE_PROTOCOLS
+from files_server_fastapi.files.constants import BASE_DIR, SMB_BASE_DIR, OFFICE_PROTOCOLS
 from files_server_fastapi.files.dependencies import check_folder_access
 
 router = APIRouter()
@@ -35,7 +35,7 @@ async def get_open_url(
 
     if office_protocol:
         subpath_win = safe_subpath.replace("/", "\\")
-        unc_path = f"{BASE_DIR}\\{area.upper()}\\{subpath_win}\\{safe_filename}" if safe_subpath else f"{BASE_DIR}\\{area.upper()}\\{safe_filename}"
+        unc_path = f"{SMB_BASE_DIR}\\{area.upper()}\\{subpath_win}\\{safe_filename}" if safe_subpath else f"{SMB_BASE_DIR}\\{area.upper()}\\{safe_filename}"
         return {
             "type": "office",
             "protocol": office_protocol,

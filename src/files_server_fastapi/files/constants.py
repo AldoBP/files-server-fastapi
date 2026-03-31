@@ -1,5 +1,13 @@
-# Directorio maestro (ruta de red Samba vista desde Windows)
-BASE_DIR = r"\\192.168.1.122\Compartido"
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Directorio maestro (ruta local en servidor Linux)
+BASE_DIR = os.getenv("FILES_BASE_DIR")
+# Directorio compartido para clientes Windows (Samba UNC Path)
+SMB_BASE_DIR = os.getenv("SMB_BASE_DIR")
+
 
 # Mapeo extensión → protocolo de Office
 OFFICE_PROTOCOLS = {

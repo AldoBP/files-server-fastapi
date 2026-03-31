@@ -17,6 +17,7 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "oauth2fast-fastapi==0.2.5",
+    "python-dotenv",
 ]
 
 [dependency-groups]
