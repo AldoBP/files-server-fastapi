@@ -1,6 +1,6 @@
 [project]
 name = "files-server-fastapi"
-version = "0.1.9"
+version = "0.1.10"
 description = "Este repositorio es un paquete python desarrollado con FastAPI, gestiona la comunicación con un servidor Samba y utiliza PostgreSQL para administrar rutas de archivos y el control de acceso basado en roles (RBAC) de los usuarios."
 readme = "README.md"
 license = { file = "LICENSE" }

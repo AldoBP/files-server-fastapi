@@ -101,3 +101,43 @@ async def create_acl(
             processed_acls.append(new_acl.id)
 
     return {"message": "ACLs asignados correctamente", "processed_acls": processed_acls}
+
+@router.get("/acls", summary="Obtener las carpetas compartidas del usuario")
+async def get_user_acls(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    Devuelve la lista de rutas (carpetas) a las que el usuario tiene acceso
+    mediante asignación directa en la tabla User_Ruta_Access.
+    """
+    # Buscar el ID real de la tabla Users_extend del usuario activo
+    ext_result = await db.execute(select(Users_extend).where(Users_extend.user_id == current_user.id))
+    user_exts = ext_result.scalars().all()
+    
+    if not user_exts:
+        return []
+
+    # Se obtienen todos los ACLs del usuario para cualquier ruta (donde no sea deny_all)
+    # y hacemos join con Rutas para traer el path
+    result = await db.execute(
+        select(Rutas.ruta, Rutas.name, User_Ruta_Access.access_type, Area.area_name)
+        .join(User_Ruta_Access, User_Ruta_Access.ruta_id == Rutas.id)
+        .join(Area, Area.id == Rutas.area_id)
+        .where(User_Ruta_Access.user_id == current_user.id)
+        .where(User_Ruta_Access.access_type != "deny_all")
+    )
+    
+    shared_folders = []
+    for row in result.all():
+        ruta, nombre, access_type, area_name = row
+        shared_folders.append({
+            "path": ruta,
+            "name": nombre,
+            "permission": "EDITOR" if access_type == "allow_write" else "VIEWER",
+            "area": area_name,
+            "type": "folder",
+            "is_shared": True
+        })
+
+    return {"shared_folders": shared_folders}
