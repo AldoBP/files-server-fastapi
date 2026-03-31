@@ -2,10 +2,14 @@ import os
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import get_current_user, User
 from files_server_fastapi.files.constants import BASE_DIR
 from files_server_fastapi.files.dependencies import check_folder_access
+from files_server_fastapi.models.rutas_model import Rutas
+from files_server_fastapi.models.area_model import Area
 
 router = APIRouter()
 
@@ -32,6 +36,23 @@ async def create_folder(
     print(ruta_final)
     try:
         os.makedirs(ruta_final, exist_ok=False)
+
+        # Buscar el área para ligar la ruta
+        area_query = await db.execute(select(Area).where(Area.area_name.ilike(req.area)))
+        area_obj = area_query.scalars().first()
+        
+        # Guardar formalmente la carpeta en base de datos
+        if area_obj:
+            logical_path_db = f"/{req.area.upper()}/{safe_subpath}/{req.folder_name}".replace("//", "/") if safe_subpath else f"/{req.area.upper()}/{req.folder_name}".replace("//", "/")
+            
+            nueva_ruta = Rutas(
+                ruta=logical_path_db,
+                name=req.folder_name,
+                area_id=area_obj.id
+            )
+            db.add(nueva_ruta)
+            await db.commit()
+
         return {"message": "Carpeta creada exitosamente", "path": ruta_final}
     except FileExistsError:
         raise HTTPException(status_code=400, detail="Ya existe una carpeta con ese nombre aquí")
