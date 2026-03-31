@@ -628,10 +628,11 @@ wheels = [
 
 [[package]]
 name = "files-server-fastapi"
-version = "0.1.7"
+version = "0.1.8"
 source = { editable = "." }
 dependencies = [
     { name = "oauth2fast-fastapi" },
+    { name = "python-dotenv" },
 ]
 
 [package.dev-dependencies]
@@ -645,7 +646,10 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "oauth2fast-fastapi", specifier = "==0.2.5" }]
+requires-dist = [
+    { name = "oauth2fast-fastapi", specifier = "==0.2.5" },
+    { name = "python-dotenv" },
+]
 
 [package.metadata.requires-dev]
 dev = [

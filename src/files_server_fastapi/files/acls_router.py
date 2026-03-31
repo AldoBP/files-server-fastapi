@@ -9,6 +9,7 @@ from oauth2fast_fastapi import get_current_user, User
 from files_server_fastapi.models.permisos_model import User_Ruta_Access
 from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.area_model import Area
+from files_server_fastapi.models.users_extend_model import Users_extend
 
 router = APIRouter()
 
@@ -30,10 +31,14 @@ async def create_acl(
     """
     Crea o actualiza los accesos (ACLs) enviados desde el frontend.
     """
-    # 0. Validar que el usuario existe en la BD
-    user_result = await db.execute(select(User).where(User.id == req.user_id))
-    if not user_result.scalars().first():
-        raise HTTPException(status_code=404, detail=f"El usuario con ID {req.user_id} no existe en la base de datos.")
+    # 0. Traducir el ID que manda el frontend (users_extend.id) al verdadero user_id de la tabla Users
+    ext_result = await db.execute(select(Users_extend).where(Users_extend.id == req.user_id))
+    user_ext_obj = ext_result.scalars().first()
+    
+    if not user_ext_obj:
+        raise HTTPException(status_code=404, detail=f"No se encontró ninguna extensión de usuario activa con el ID {req.user_id}.")
+
+    real_user_id = user_ext_obj.user_id
 
     # 1. Verificar si el Área existe para crear la Ruta adecuadamente
     area_result = await db.execute(select(Area).where(Area.area_name.ilike(req.area)))
@@ -76,7 +81,7 @@ async def create_acl(
         # 3. Asignar el ACL en User_Ruta_Access
         acl_result = await db.execute(
             select(User_Ruta_Access)
-            .where(User_Ruta_Access.user_id == req.user_id)
+            .where(User_Ruta_Access.user_id == real_user_id)
             .where(User_Ruta_Access.ruta_id == ruta_obj.id)
         )
         existing_acl = acl_result.scalars().first()
@@ -86,7 +91,7 @@ async def create_acl(
             processed_acls.append(existing_acl.id)
         else:
             new_acl = User_Ruta_Access(
-                user_id=req.user_id,
+                user_id=real_user_id,
                 ruta_id=ruta_obj.id,
                 access_type=db_access_type
             )
