@@ -51,7 +51,18 @@ async def create_acl(
     for acl_item in req.acls:
         # Limpiar subpath y contruir ruta lógica completa
         subpath = acl_item.path.strip("/")
-        logical_path_full = f"/{req.area.upper()}/{subpath}".replace("//", "/")
+        area_prefix = req.area.upper()
+
+        # Si la ruta ya empieza con el área (ej: VENTAS/test1), no la volvemos a concatenar
+        if subpath.startswith(area_prefix):
+            logical_path_full = f"/{subpath}".replace("//", "/")
+        else:
+            logical_path_full = f"/{area_prefix}/{subpath}".replace("//", "/")
+
+        # Siempre limpiar barras extras al final
+        logical_path_full = logical_path_full.rstrip("/")
+        if logical_path_full == f"/{area_prefix}":
+            logical_path_full = f"/{area_prefix}/"
         
         parts = logical_path_full.strip("/").split("/")
         folder_name = parts[-1] if len(parts) > 0 else req.area.upper()
