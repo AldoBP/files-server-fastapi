@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import get_current_user, User
-from files_server_fastapi.models.permisos_model import User_Ruta_Access
+from files_server_fastapi.models.permisos_model import User_Ruta_Access, Permisos, Permiso_rol
 from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.users_extend_model import Users_extend
 from files_server_fastapi.models.area_model import Area
@@ -35,23 +35,16 @@ async def check_folder_access(
             return True  # SUPER_ADMIN tiene acceso universal
 
     # 3. Identificar si el usuario pertenece al área solicitada
-    area_obj = None
-    user_ext_match = None
-    rol_name = ""
-
+    # (Guardamos el rol_id para usarlo si no hay ACL específico)
+    user_ext_in_area = None
     for ext in user_exts:
         res_area = await db.execute(select(Area).where(Area.id == ext.area_id))
         a = res_area.scalars().first()
         if a and a.area_name.upper() == area.upper():
-            area_obj = a
-            user_ext_match = ext
-            # Obtener el Rol Base del usuario en ESTA área específica
-            res_rol = await db.execute(select(Rol).where(Rol.id == user_ext_match.rol_id))
-            rol_obj = res_rol.scalars().first()
-            rol_name = rol_obj.role_name.lower() if rol_obj else ""
+            user_ext_in_area = ext
             break
 
-    # 4. Verificar ACL específico por ruta y herencia de padres
+    # 4. Generar lista de rutas (jerarquía) para herencia
     logical_path = f"/{area.upper()}/{subpath.strip('/')}".replace("//", "/")
     parts = logical_path.strip("/").split("/")
     paths_to_check = []
@@ -61,8 +54,9 @@ async def check_folder_access(
             current_path += f"/{part}"
             paths_to_check.append(current_path)
 
-    paths_to_check.reverse()  # Más específico primero (del subpath hacia la raíz del área)
+    paths_to_check.reverse()  # Más específico primero
 
+    # 5. BUSQUEDA DE ACL (User_Ruta_Access) - Manda sobre el rol
     res_acl = await db.execute(
         select(Rutas.ruta, User_Ruta_Access)
         .join(User_Ruta_Access, User_Ruta_Access.ruta_id == Rutas.id)
@@ -74,30 +68,54 @@ async def check_folder_access(
     for path_in_tree in paths_to_check:
         if path_in_tree in acls_encontrados:
             acl_obj = acls_encontrados[path_in_tree]
-
             if acl_obj.access_type == "deny_all":
-                raise HTTPException(status_code=403, detail="Acceso denegado a esta carpeta o heredado de una superior")
-
+                raise HTTPException(status_code=403, detail="Acceso denegado (ACL: deny_all)")
+            
             if required_access == "allow_write":
                 if acl_obj.access_type == "allow_write":
                     return True
                 elif acl_obj.access_type == "allow_read":
-                    raise HTTPException(status_code=403, detail="Solo tienes permiso de lectura (regla heredada)")
+                    raise HTTPException(status_code=403, detail="Solo lectura (ACL heredado)")
+            
+            if required_access == "allow_read" and acl_obj.access_type in ["allow_read", "allow_write"]:
+                return True
 
-            if required_access == "allow_read":
-                if acl_obj.access_type in ["allow_read", "allow_write"]:
-                    return True
+    # 6. BUSQUEDA POR ROL (Lógica Avanzada Dinámica)
+    # Si el usuario pertenece al área, miramos qué permisos tiene su rol para esta ruta o superiores
+    if user_ext_in_area:
+        res_role_perms = await db.execute(
+            select(Rutas.ruta, Permisos.permiso_name)
+            .join(Permiso_rol, Permiso_rol.id_permiso == Permisos.id)
+            .join(Rutas, Rutas.id == Permiso_rol.ruta_id)
+            .where(Permiso_rol.id_rol == user_ext_in_area.rol_id)
+            .where(Rutas.ruta.in_(paths_to_check))
+        )
+        
+        # Agrupamos permisos por ruta para facilitar herencia
+        # Estructura: {"/RUTA": set(["READ", "WRITE"])}
+        role_perms_map = {}
+        for r, p_name in res_role_perms.all():
+            if r not in role_perms_map: role_perms_map[r] = set()
+            role_perms_map[r].add(p_name.upper())
 
-    # 5. Si NO hay ACL explícito, verificar reglas por pertenencia al área
-    if user_ext_match:
-        if required_access == "allow_write":
-            if "editor" not in rol_name and "admin" not in rol_name:
-                raise HTTPException(status_code=403, detail="Tu rol no permite modificar esta carpeta")
-        # Si es allow_read y pertenece al área, se permite por defecto
-        return True
+        # Revisamos herencia de permisos de rol
+        for path_in_tree in paths_to_check:
+            if path_in_tree in role_perms_map:
+                perms = role_perms_map[path_in_tree]
+                
+                if required_access == "allow_write":
+                    if "WRITE" in perms: return True
+                
+                if required_access == "allow_read":
+                    if "READ" in perms or "WRITE" in perms: return True
 
-    # 6. Si no pertenece al área y no se encontró ningún ACL, denegar acceso
+        # Si el usuario es miembro del área pero no tiene permisos específicos por ruta,
+        # podríamos tener permisos globales de área. Por ahora, si no hay nada en Permiso_rol 
+        # para esas rutas, aplicamos denegación o un default (pero tú pediste no hardcoded).
+        # Nota: La "Ruta Raíz" del área (ej: /VENTAS) cuenta como herencia si está en Permiso_rol.
+
+    # 7. Denegación final
     raise HTTPException(
         status_code=403,
-        detail=f"No perteneces al área {area} ni tienes permisos específicos asignados para esta ruta."
+        detail=f"No tienes el permiso necesario ({required_access}) para esta ruta."
     )
