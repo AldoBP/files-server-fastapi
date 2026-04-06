@@ -1,5 +1,6 @@
 import os
 import mimetypes
+from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 from files_server_fastapi.files.constants import BASE_DIR, SMB_BASE_DIR, OFFICE_PROTOCOLS, INLINE_MIME_TYPES
@@ -46,6 +47,20 @@ async def get_open_url(
 
     # ── Caso 1: Archivos Office ──────────────────────────────────────────────
     if office_protocol:
+        # ── WebDAV URL (recomendada, funciona desde cualquier lugar) ────────
+        # Office abre el archivo via HTTPS/WebDAV, edita en memoria y guarda
+        # con PUT directamente al servidor. No se descarga ni re-sube nada.
+        # Formato: ms-word:ofe|u|https://servidor/webdav/AREA/subpath/file.docx
+        base_url = str(request.base_url).rstrip("/")
+        webdav_path_parts = [area.upper()]
+        if safe_subpath:
+            webdav_path_parts.append(safe_subpath)
+        webdav_path_parts.append(safe_filename)
+        webdav_path = "/".join(quote(p, safe="") for p in webdav_path_parts)
+        webdav_url = f"{base_url}/webdav/{webdav_path}"
+        office_url = f"{office_protocol}:ofe|u|{webdav_url}"
+
+        # ── UNC path (alternativa, solo funciona en LAN con Samba montado) ────
         subpath_win = safe_subpath.replace("/", "\\")
         unc_path = (
             f"{SMB_BASE_DIR}\\{area.upper()}\\{subpath_win}\\{safe_filename}"
@@ -55,8 +70,9 @@ async def get_open_url(
         return {
             "type": "office",
             "protocol": office_protocol,
-            "url": f"{office_protocol}:ofe|u|{unc_path}",
-            "unc_path": unc_path,
+            "url": office_url,        # ← URL principal: WebDAV via HTTP(S)
+            "webdav_url": webdav_url, # ← URL WebDAV directa
+            "unc_path": unc_path,     # ← Alternativa UNC si el cliente tiene Samba
             "filename": safe_filename,
         }
 

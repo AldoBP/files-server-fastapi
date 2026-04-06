@@ -18,6 +18,8 @@ requires-python = ">=3.10"
 dependencies = [
     "oauth2fast-fastapi==0.2.5",
     "python-dotenv",
+    "wsgidav>=4.3",
+    "psycopg2-binary>=2.9",
 ]
 
 [dependency-groups]
