@@ -47,19 +47,7 @@ async def get_open_url(
 
     # ── Caso 1: Archivos Office ──────────────────────────────────────────────
     if office_protocol:
-        # Construir la URL WebDAV codificando cada segmento de ruta por separado.
-        # Si safe_subpath es "carpeta/sub", se divide en ["carpeta", "sub"] para
-        # que las barras no queden codificadas como %2F y rompan la URL.
-        base_url = str(request.base_url).rstrip("/")
-        path_segments = [area.upper()]
-        if safe_subpath:
-            path_segments.extend(p for p in safe_subpath.split("/") if p)
-        path_segments.append(safe_filename)
-        webdav_path = "/".join(quote(seg, safe="") for seg in path_segments)
-        webdav_url  = f"{base_url}/webdav/{webdav_path}"
-        office_url  = f"{office_protocol}:ofe|u|{webdav_url}"
-
-        # ── UNC path (alternativa, solo funciona en LAN con Samba montado) ────
+        # Se genera la ruta UNC para abrir directamente mediante Samba
         subpath_win = safe_subpath.replace("/", "\\")
         unc_path = (
             f"{SMB_BASE_DIR}\\{area.upper()}\\{subpath_win}\\{safe_filename}"
@@ -69,9 +57,8 @@ async def get_open_url(
         return {
             "type": "office",
             "protocol": office_protocol,
-            "url": office_url,        # ← URL principal: WebDAV via HTTP(S)
-            "webdav_url": webdav_url, # ← URL WebDAV directa
-            "unc_path": unc_path,     # ← Alternativa UNC si el cliente tiene Samba
+            "url": f"{office_protocol}:ofe|u|{unc_path}",
+            "unc_path": unc_path,
             "filename": safe_filename,
         }
 
@@ -96,3 +83,40 @@ async def get_open_url(
         "url": f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}",
         "filename": safe_filename,
     }
+
+
+from fastapi.responses import PlainTextResponse
+import re
+
+@router.get("/samba-trust-script", summary="Descargar script para solucionar error de Vista Protegida de Office")
+async def get_samba_trust_script():
+    """
+    Descarga un script .bat que agrega el servidor Samba a la zona de "Intranet Local"
+    en Windows. Esto resuelve el bloqueo 'Vista protegida / Zona Internet' que lanza Office
+    cuando se intenta abrir una ruta UNC generada desde el navegador.
+    """
+    # Extraemos la IP o dominio del servidor de la ruta UNC configurada en .env
+    host_match = re.match(r"^\\\\([^\\/]+)", SMB_BASE_DIR)
+    host = host_match.group(1) if host_match else "127.0.0.1"
+
+    bat_content = f"""@echo off
+echo =========================================================
+echo Solucionando bloqueo de Office para el servidor: {host}
+echo =========================================================
+echo.
+echo Agregando {host} a la Intranet Local de Windows...
+echo.
+
+:: Agregar configuracion en el Registro usando PowerShell
+powershell -Command "$ip = '{host}'; $path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\\ZoneMap\\Ranges\\RangeIMBO'; if (!(Test-Path $path)) {{ New-Item -Path $path -Force | Out-Null }}; Set-ItemProperty -Path $path -Name ':Range' -Value $ip; Set-ItemProperty -Path $path -Name 'file' -Value 1;"
+
+echo.
+echo [EXITO] Servidor agregado a la zona de confianza.
+echo Ahora los archivos de Word/Excel abriran correctamente sin bloqueos.
+echo.
+pause
+"""
+    return PlainTextResponse(
+        content=bat_content,
+        headers={"Content-Disposition": 'attachment; filename="solucion_office_imbo.bat"'}
+    )
