@@ -47,18 +47,17 @@ async def get_open_url(
 
     # ── Caso 1: Archivos Office ──────────────────────────────────────────────
     if office_protocol:
-        # ── WebDAV URL (recomendada, funciona desde cualquier lugar) ────────
-        # Office abre el archivo via HTTPS/WebDAV, edita en memoria y guarda
-        # con PUT directamente al servidor. No se descarga ni re-sube nada.
-        # Formato: ms-word:ofe|u|https://servidor/webdav/AREA/subpath/file.docx
+        # Construir la URL WebDAV codificando cada segmento de ruta por separado.
+        # Si safe_subpath es "carpeta/sub", se divide en ["carpeta", "sub"] para
+        # que las barras no queden codificadas como %2F y rompan la URL.
         base_url = str(request.base_url).rstrip("/")
-        webdav_path_parts = [area.upper()]
+        path_segments = [area.upper()]
         if safe_subpath:
-            webdav_path_parts.append(safe_subpath)
-        webdav_path_parts.append(safe_filename)
-        webdav_path = "/".join(quote(p, safe="") for p in webdav_path_parts)
-        webdav_url = f"{base_url}/webdav/{webdav_path}"
-        office_url = f"{office_protocol}:ofe|u|{webdav_url}"
+            path_segments.extend(p for p in safe_subpath.split("/") if p)
+        path_segments.append(safe_filename)
+        webdav_path = "/".join(quote(seg, safe="") for seg in path_segments)
+        webdav_url  = f"{base_url}/webdav/{webdav_path}"
+        office_url  = f"{office_protocol}:ofe|u|{webdav_url}"
 
         # ── UNC path (alternativa, solo funciona en LAN con Samba montado) ────
         subpath_win = safe_subpath.replace("/", "\\")

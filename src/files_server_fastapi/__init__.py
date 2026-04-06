@@ -14,17 +14,16 @@ from files_server_fastapi.routers import (
 def get_webdav_wsgi_app():
     """
     Crea y devuelve la aplicación WSGI WebDAV para montar en FastAPI.
+    Lee toda la configuración desde constants.py (que lee del .env).
 
     Uso en main.py:
         from starlette.middleware.wsgi import WSGIMiddleware
         from files_server_fastapi import get_webdav_wsgi_app
 
-        webdav_app = get_webdav_wsgi_app()
-        app.mount("/webdav", WSGIMiddleware(webdav_app))
+        app.mount("/webdav", WSGIMiddleware(get_webdav_wsgi_app()))
     """
     from files_server_fastapi.files.webdav_setup import create_webdav_app
-    from files_server_fastapi.files.constants import BASE_DIR
-    return create_webdav_app(BASE_DIR)
+    return create_webdav_app()
 
 
 __all__ = [
