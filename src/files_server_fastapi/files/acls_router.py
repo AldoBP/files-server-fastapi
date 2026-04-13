@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import get_current_user, User
+from files_server_fastapi.files.path_utils import normalize_subpath, build_logical_path
 from files_server_fastapi.models.permisos_model import User_Ruta_Access, Permisos
 from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.area_model import Area
@@ -49,23 +50,22 @@ async def create_acl(
     processed_acls = []
 
     for acl_item in req.acls:
-        # Limpiar subpath y contruir ruta lógica completa
-        subpath = acl_item.path.strip("/")
-        area_prefix = req.area.upper()
+        # ── DEBUG ─────────────────────────────────────────────────────────────
+        print(f"[acls_router] INPUT  → area={req.area!r}  path={acl_item.path!r}  permission={acl_item.permission!r}")
+        # ─────────────────────────────────────────────────────────────────────
 
-        # Si la ruta ya empieza con el área (ej: VENTAS/test1), no la volvemos a concatenar
-        if subpath.startswith(area_prefix):
-            logical_path_full = f"/{subpath}".replace("//", "/")
-        else:
-            logical_path_full = f"/{area_prefix}/{subpath}".replace("//", "/")
+        # Normalizar el path recibido: quitar el área si el frontend ya la incluyó
+        clean_sub = normalize_subpath(req.area, acl_item.path)
 
-        # Siempre limpiar barras extras al final
-        logical_path_full = logical_path_full.rstrip("/")
-        if logical_path_full == f"/{area_prefix}":
-            logical_path_full = f"/{area_prefix}/"
-        
+        # Construir la ruta lógica completa limpia (sin área duplicada)
+        logical_path_full = build_logical_path(req.area, clean_sub)
+
         parts = logical_path_full.strip("/").split("/")
         folder_name = parts[-1] if len(parts) > 0 else req.area.upper()
+
+        # ── DEBUG ─────────────────────────────────────────────────────────────
+        print(f"[acls_router] RESULT → clean_sub={clean_sub!r}  logical_path_full={logical_path_full!r}")
+        # ─────────────────────────────────────────────────────────────────────
 
         # Consultar la DB dinámicamente para averiguar qué acción implica el permiso solicitado de frontend
         perm_result = await db.execute(select(Permisos).where(Permisos.permiso_name.ilike(acl_item.permission)))
