@@ -54,34 +54,29 @@ async def create_acl(
         print(f"[acls_router] INPUT  → area={req.area!r}  path={acl_item.path!r}  permission={acl_item.permission!r}")
         # ─────────────────────────────────────────────────────────────────────
 
-        # Normalizar el path recibido: quitar el área si el frontend ya la incluyó
-        clean_sub = normalize_subpath(req.area, acl_item.path)
+        # Normalizar el path tal como viene del frontend (con barra inicial limpia)
+        raw_path = "/" + acl_item.path.strip("/")
+        parts_raw = raw_path.strip("/").split("/")
+        folder_name = parts_raw[-1] if parts_raw else req.area.upper()
 
-        # Construir la ruta lógica completa limpia (sin área duplicada)
-        logical_path_full = build_logical_path(req.area, clean_sub)
-
-        parts = logical_path_full.strip("/").split("/")
-        folder_name = parts[-1] if len(parts) > 0 else req.area.upper()
-
-        # ── DEBUG ─────────────────────────────────────────────────────────────
-        print(f"[acls_router] RESULT → clean_sub={clean_sub!r}  logical_path_full={logical_path_full!r}")
-        # ─────────────────────────────────────────────────────────────────────
-
-        # Consultar la DB dinámicamente para averiguar qué acción implica el permiso solicitado de frontend
-        perm_result = await db.execute(select(Permisos).where(Permisos.permiso_name.ilike(acl_item.permission)))
-        permiso_obj = perm_result.scalars().first()
-        
-        if permiso_obj:
-            db_access_type = permiso_obj.fastapi_action
-        else:
-            db_access_type = "allow_read" # Fallback extremo si enviaron algo inválido
-
-        # 2. Buscar si la ruta ya existe en la tabla Rutas
-        ruta_result = await db.execute(select(Rutas).where(Rutas.ruta == logical_path_full))
+        # PASO 1 — Buscar el path exacto en DB (permite cross-área, ej: /INGENIERIA/... para usuario de VENTAS)
+        ruta_result = await db.execute(select(Rutas).where(Rutas.ruta == raw_path))
         ruta_obj = ruta_result.scalars().first()
 
-        # Si no existe, crearla
-        if not ruta_obj:
+        if ruta_obj:
+            logical_path_full = raw_path
+            # ── DEBUG ─────────────────────────────────────────────────────────
+            print(f"[acls_router] FOUND  → ruta existente en DB: {logical_path_full!r} (area_id={ruta_obj.area_id})")
+            # ─────────────────────────────────────────────────────────────────
+        else:
+            # PASO 2 — Si no existe, construir desde el área del request (misma área)
+            clean_sub = normalize_subpath(req.area, acl_item.path)
+            logical_path_full = build_logical_path(req.area, clean_sub)
+
+            # ── DEBUG ─────────────────────────────────────────────────────────
+            print(f"[acls_router] BUILD  → no encontrada, construyendo: {logical_path_full!r}")
+            # ─────────────────────────────────────────────────────────────────
+
             ruta_obj = Rutas(
                 ruta=logical_path_full,
                 name=folder_name,
@@ -90,6 +85,15 @@ async def create_acl(
             db.add(ruta_obj)
             await db.commit()
             await db.refresh(ruta_obj)
+
+        # Consultar la DB dinámicamente para averiguar qué acción implica el permiso solicitado de frontend
+        perm_result = await db.execute(select(Permisos).where(Permisos.permiso_name.ilike(acl_item.permission)))
+        permiso_obj = perm_result.scalars().first()
+
+        if permiso_obj:
+            db_access_type = permiso_obj.fastapi_action
+        else:
+            db_access_type = "allow_read"  # Fallback si enviaron algo inválido
 
         # 3. Asignar el ACL en User_Ruta_Access
         acl_result = await db.execute(
