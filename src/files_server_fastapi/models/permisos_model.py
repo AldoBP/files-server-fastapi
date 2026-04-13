@@ -8,6 +8,8 @@ class Permisos(AuthModel, table=True):
     
     permiso_name: str = Field(nullable=False)
     description: Optional[str] = Field(default=None)
+    linux_acl: str = Field(default="---", description="Ejemplo: rwx, r-x, ---")
+    fastapi_action: str = Field(default="deny_all", description="Ejemplo: allow_write, allow_read, deny_all")
 
 
 # Tabla ACL: Control de Acceso Granular por Usuario a una Ruta

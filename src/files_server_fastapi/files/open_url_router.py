@@ -108,7 +108,7 @@ echo Agregando {host} a la Intranet Local de Windows...
 echo.
 
 :: Agregar configuracion en el Registro usando PowerShell
-powershell -Command "$ip = '{host}'; $path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\\ZoneMap\\Ranges\\RangeIMBO'; if (!(Test-Path $path)) {{ New-Item -Path $path -Force | Out-Null }}; Set-ItemProperty -Path $path -Name ':Range' -Value $ip; Set-ItemProperty -Path $path -Name 'file' -Value 1;"
+powershell -Command "$ip = '{host}'; $path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\\ZoneMap\\Ranges\\RangeServer'; if (!(Test-Path $path)) {{ New-Item -Path $path -Force | Out-Null }}; Set-ItemProperty -Path $path -Name ':Range' -Value $ip; Set-ItemProperty -Path $path -Name 'file' -Value 1;"
 
 echo.
 echo [EXITO] Servidor agregado a la zona de confianza.
@@ -118,5 +118,5 @@ pause
 """
     return PlainTextResponse(
         content=bat_content,
-        headers={"Content-Disposition": 'attachment; filename="solucion_office_imbo.bat"'}
+        headers={"Content-Disposition": 'attachment; filename="solucion_office_red.bat"'}
     )

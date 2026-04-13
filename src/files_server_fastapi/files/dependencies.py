@@ -84,7 +84,7 @@ async def check_folder_access(
     # Si el usuario pertenece al área, miramos qué permisos tiene su rol para esta ruta o superiores
     if user_ext_in_area:
         res_role_perms = await db.execute(
-            select(Rutas.ruta, Permisos.permiso_name)
+            select(Rutas.ruta, Permisos.fastapi_action)
             .join(Permiso_rol, Permiso_rol.id_permiso == Permisos.id)
             .join(Rutas, Rutas.id == Permiso_rol.ruta_id)
             .where(Permiso_rol.id_rol == user_ext_in_area.rol_id)
@@ -92,27 +92,22 @@ async def check_folder_access(
         )
         
         # Agrupamos permisos por ruta para facilitar herencia
-        # Estructura: {"/RUTA": set(["READ", "WRITE"])}
+        # Estructura: {"/RUTA": set(["allow_read", "allow_write"])}
         role_perms_map = {}
-        for r, p_name in res_role_perms.all():
+        for r, p_action in res_role_perms.all():
             if r not in role_perms_map: role_perms_map[r] = set()
-            role_perms_map[r].add(p_name.upper())
+            role_perms_map[r].add(p_action)
 
         # Revisamos herencia de permisos de rol
         for path_in_tree in paths_to_check:
             if path_in_tree in role_perms_map:
-                perms = role_perms_map[path_in_tree]
+                actions = role_perms_map[path_in_tree]
                 
-                if required_access == "allow_write":
-                    if "WRITE" in perms: return True
+                if required_access == "allow_write" and "allow_write" in actions:
+                    return True
                 
-                if required_access == "allow_read":
-                    if "READ" in perms or "WRITE" in perms: return True
-
-        # Si el usuario es miembro del área pero no tiene permisos específicos por ruta,
-        # podríamos tener permisos globales de área. Por ahora, si no hay nada en Permiso_rol 
-        # para esas rutas, aplicamos denegación o un default (pero tú pediste no hardcoded).
-        # Nota: La "Ruta Raíz" del área (ej: /VENTAS) cuenta como herencia si está en Permiso_rol.
+                if required_access == "allow_read" and ("allow_read" in actions or "allow_write" in actions):
+                    return True
 
     # 7. Denegación final
     raise HTTPException(

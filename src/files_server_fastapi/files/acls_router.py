@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import get_current_user, User
-from files_server_fastapi.models.permisos_model import User_Ruta_Access
+from files_server_fastapi.models.permisos_model import User_Ruta_Access, Permisos
 from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.users_extend_model import Users_extend
@@ -67,12 +67,14 @@ async def create_acl(
         parts = logical_path_full.strip("/").split("/")
         folder_name = parts[-1] if len(parts) > 0 else req.area.upper()
 
-        # Mapear permisos del Frontend ("EDITOR" / "VIEWER") a tipos de DB ("allow_write" / "allow_read")
-        db_access_type = "allow_read" # Por defecto
-        if acl_item.permission.upper() == "EDITOR":
-            db_access_type = "allow_write"
-        elif acl_item.permission.upper() == "DENY":
-            db_access_type = "deny_all"
+        # Consultar la DB dinámicamente para averiguar qué acción implica el permiso solicitado de frontend
+        perm_result = await db.execute(select(Permisos).where(Permisos.permiso_name.ilike(acl_item.permission)))
+        permiso_obj = perm_result.scalars().first()
+        
+        if permiso_obj:
+            db_access_type = permiso_obj.fastapi_action
+        else:
+            db_access_type = "allow_read" # Fallback extremo si enviaron algo inválido
 
         # 2. Buscar si la ruta ya existe en la tabla Rutas
         ruta_result = await db.execute(select(Rutas).where(Rutas.ruta == logical_path_full))
@@ -139,13 +141,17 @@ async def get_user_acls(
         .where(User_Ruta_Access.access_type != "deny_all")
     )
     
+    # Obtener el mapeo de acciones a nombres (Reverse lookup)
+    perm_result = await db.execute(select(Permisos.fastapi_action, Permisos.permiso_name))
+    action_to_name = {action: name for action, name in perm_result.all()}
+
     shared_folders = []
     for row in result.all():
         ruta, nombre, access_type, area_name = row
         shared_folders.append({
             "path": ruta,
             "name": nombre,
-            "permission": "EDITOR" if access_type == "allow_write" else "VIEWER",
+            "permission": action_to_name.get(access_type, access_type),
             "area": area_name,
             "type": "folder",
             "is_shared": True
@@ -178,14 +184,13 @@ async def get_specific_user_acls(
         .where(User_Ruta_Access.user_id == real_user_id)
     )
     
-    # 2. Convertir al formato simple que espera el frontend
+    # 2. Obtener el mapeo de acciones a nombres (Reverse lookup dinámico)
+    perm_result = await db.execute(select(Permisos.fastapi_action, Permisos.permiso_name))
+    action_to_name = {action: name for action, name in perm_result.all()}
+
+    # 3. Convertir al formato simple que espera el frontend
     acls_dict = {}
     for ruta, access_type in result.all():
-        if access_type == "allow_write":
-            acls_dict[ruta] = "EDITOR"
-        elif access_type == "allow_read":
-            acls_dict[ruta] = "VIEWER"
-        elif access_type == "deny_all":
-            acls_dict[ruta] = "DENIED"
+        acls_dict[ruta] = action_to_name.get(access_type, access_type)
     
     return acls_dict
