@@ -5,7 +5,7 @@ from oauth2fast_fastapi import AuthModel
 class Rutas(AuthModel, table=True):
     __tablename__ = "rutas"
     
-    ruta: str = Field(nullable=False)
+    ruta: str = Field(nullable=False, unique=True)
     name: str = Field(nullable=False)
     
     # Llave foránea hacia Area

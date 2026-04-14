@@ -90,10 +90,10 @@ async def create_acl(
         perm_result = await db.execute(select(Permisos).where(Permisos.permiso_name.ilike(acl_item.permission)))
         permiso_obj = perm_result.scalars().first()
 
-        if permiso_obj:
-            db_access_type = permiso_obj.fastapi_action
-        else:
-            db_access_type = "allow_read"  # Fallback si enviaron algo inválido
+        if not permiso_obj:
+            raise HTTPException(status_code=400, detail=f"El permiso '{acl_item.permission}' no existe en la base de datos.")
+            
+        db_access_type = permiso_obj.fastapi_action
 
         # 3. Asignar el ACL en User_Ruta_Access
         acl_result = await db.execute(
@@ -105,6 +105,7 @@ async def create_acl(
 
         if existing_acl:
             existing_acl.access_type = db_access_type
+            await db.commit()
             processed_acls.append(existing_acl.id)
         else:
             new_acl = User_Ruta_Access(
