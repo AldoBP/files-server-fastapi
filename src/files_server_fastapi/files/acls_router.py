@@ -69,22 +69,32 @@ async def create_acl(
             print(f"[acls_router] FOUND  → ruta existente en DB: {logical_path_full!r} (area_id={ruta_obj.area_id})")
             # ─────────────────────────────────────────────────────────────────
         else:
-            # PASO 2 — Si no existe, construir desde el área del request (misma área)
+            # PASO 2 — Normalizar el path y buscar OTRA VEZ con la forma canónica
+            # (cubre el caso donde el frontend omite el área como prefijo)
             clean_sub = normalize_subpath(req.area, acl_item.path)
             logical_path_full = build_logical_path(req.area, clean_sub)
 
-            # ── DEBUG ─────────────────────────────────────────────────────────
-            print(f"[acls_router] BUILD  → no encontrada, construyendo: {logical_path_full!r}")
-            # ─────────────────────────────────────────────────────────────────
+            ruta_norm_result = await db.execute(select(Rutas).where(Rutas.ruta == logical_path_full))
+            ruta_obj = ruta_norm_result.scalars().first()
 
-            ruta_obj = Rutas(
-                ruta=logical_path_full,
-                name=folder_name,
-                area_id=area_obj.id
-            )
-            db.add(ruta_obj)
-            await db.commit()
-            await db.refresh(ruta_obj)
+            if ruta_obj:
+                # ── DEBUG ──────────────────────────────────────────────────────────
+                print(f"[acls_router] FOUND  → ruta canónica en DB: {logical_path_full!r} (area_id={ruta_obj.area_id})")
+                # ──────────────────────────────────────────────────────────────────
+            else:
+                # PASO 3 — Realmente no existe: crear la entrada en DB
+                # ── DEBUG ─────────────────────────────────────────────────────────
+                print(f"[acls_router] BUILD  → no encontrada, construyendo: {logical_path_full!r}")
+                # ─────────────────────────────────────────────────────────────────
+
+                ruta_obj = Rutas(
+                    ruta=logical_path_full,
+                    name=folder_name,
+                    area_id=area_obj.id
+                )
+                db.add(ruta_obj)
+                await db.commit()
+                await db.refresh(ruta_obj)
 
         # Consultar la DB dinámicamente para averiguar qué acción implica el permiso solicitado de frontend
         perm_result = await db.execute(select(Permisos).where(Permisos.permiso_name.ilike(acl_item.permission)))
