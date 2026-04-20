@@ -1,4 +1,5 @@
 import os
+import shutil
 import asyncio
 from fastapi import APIRouter, HTTPException, Depends
 from files_server_fastapi.files.constants import BASE_DIR
@@ -87,3 +88,39 @@ async def get_area_stats(
     stats = await asyncio.to_thread(_compute_stats, ruta_real)
     stats["area"] = area.upper()
     return stats
+
+
+@router.get("/stats/server", summary="Estadísticas de almacenamiento total del servidor")
+async def get_server_stats():
+    """
+    Devuelve las estadísticas generales del disco donde se encuentra BASE_DIR:
+    - Espacio total
+    - Espacio usado
+    - Espacio libre
+    """
+    try:
+        usage = shutil.disk_usage(BASE_DIR)
+
+        def format_size(size_bytes):
+            if size_bytes < 1024:
+                return f"{size_bytes} B"
+            elif size_bytes < 1024 ** 2:
+                return f"{size_bytes / 1024:.1f} KB"
+            elif size_bytes < 1024 ** 3:
+                return f"{size_bytes / 1024 ** 2:.1f} MB"
+            elif size_bytes < 1024 ** 4:
+                return f"{size_bytes / 1024 ** 3:.2f} GB"
+            else:
+                return f"{size_bytes / 1024 ** 4:.2f} TB"
+
+        return {
+            "total": usage.total,
+            "used": usage.used,
+            "free": usage.free,
+            "totalStr": format_size(usage.total),
+            "usedStr": format_size(usage.used),
+            "freeStr": format_size(usage.free),
+            "percentUsed": round((usage.used / usage.total) * 100, 2)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error obteniendo estadísticas del disco: {str(e)}")
