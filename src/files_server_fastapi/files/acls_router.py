@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
-from oauth2fast_fastapi import get_current_user, User
+from oauth2fast_fastapi import get_current_verified_user, User
 from files_server_fastapi.files.path_utils import normalize_subpath, build_logical_path
 from files_server_fastapi.models.permisos_model import User_Ruta_Access, Permisos
 from files_server_fastapi.models.rutas_model import Rutas
@@ -26,7 +26,7 @@ class AclCreate(BaseModel):
 @router.post("/acls", summary="Asignar acceso a una carpeta específica (ACL)")
 async def create_acl(
     req: AclCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -132,7 +132,7 @@ async def create_acl(
 
 @router.get("/acls", summary="Obtener las carpetas compartidas del usuario")
 async def get_user_acls(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
