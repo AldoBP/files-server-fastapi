@@ -1,20 +1,19 @@
 import os
+import re as _re
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # Directorio maestro (ruta local en servidor Linux)
 BASE_DIR = os.getenv("FILES_BASE_DIR")
-# Directorio compartido para clientes Windows (Samba UNC Path)
+# Directorio compartido para clientes Windows (Samba UNC Path) — ej: \\192.168.1.10\samba
 SMB_BASE_DIR = os.getenv("SMB_BASE_DIR")
 
-# ── WebDAV ────────────────────────────────────────────────────────────────────
-# URL de conexión PostgreSQL síncrona (psycopg2) para autenticar usuarios WebDAV.
-# Usar postgresql:// (NO postgresql+asyncpg://) — misma BD, distinto driver.
-# Ejemplo: postgresql://user:pass@localhost:5432/nombre_bd
-WEBDAV_DATABASE_URL = os.getenv("WEBDAV_DATABASE_URL")
-# Nombre que verá el usuario en el diálogo de credenciales de Office.
-WEBDAV_AUTH_REALM = os.getenv("WEBDAV_AUTH_REALM", "Servidor de Archivos")
+# Desglose de SMB_BASE_DIR para construir URLs smb:// (LibreOffice Linux/Mac)
+# Ejemplo: SMB_BASE_DIR = "\\\\192.168.1.10\\samba"  →  SMB_HOST = "192.168.1.10", SMB_SHARE_NAME = "samba"
+_smb_match = _re.match(r"^\\\\([^\\/]+)\\(.+)", SMB_BASE_DIR or "")
+SMB_HOST: str = _smb_match.group(1) if _smb_match else ""
+SMB_SHARE_NAME: str = _smb_match.group(2) if _smb_match else ""
 
 
 # Mapeo extensión → protocolo de Office
