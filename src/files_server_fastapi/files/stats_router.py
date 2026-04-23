@@ -40,15 +40,33 @@ def _compute_stats(ruta_real: str) -> dict:
         for _, name, folder in recent_files[:5]
     ]
 
-    # Formato legible del tamaño
-    if total_size < 1024:
-        size_str = f"{total_size} B"
-    elif total_size < 1024 ** 2:
-        size_str = f"{total_size / 1024:.1f} KB"
-    elif total_size < 1024 ** 3:
-        size_str = f"{total_size / 1024 ** 2:.1f} MB"
-    else:
-        size_str = f"{total_size / 1024 ** 3:.2f} GB"
+    # Formato legible del tamaño usado por el Área
+    def format_size(size_bytes):
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.1f} KB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / 1024 ** 2:.1f} MB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / 1024 ** 3:.2f} GB"
+        else:
+            return f"{size_bytes / 1024 ** 4:.2f} TB"
+    size_str = format_size(total_size)
+    
+    # NUEVO: Lógica dinámica de espacio del disco total
+    # Para sacar cuál es el espacio máximo que puede ocupar (Tomamos el disco root de ruta_real)
+    try:
+        usage = shutil.disk_usage(ruta_real)
+        total_disk_bytes = usage.total
+        total_str = format_size(total_disk_bytes)
+        # El porcentaje de uso de esta área respecto al disco total
+        percent_used = round((total_size / total_disk_bytes) * 100, 2)
+    except Exception:
+         # Fallback en caso de que ocurra algún error 
+        total_disk_bytes = 0
+        total_str = None
+        percent_used = 0
 
     return {
         "files": total_files,
@@ -56,6 +74,9 @@ def _compute_stats(ruta_real: str) -> dict:
         "sizeBytes": total_size,
         "sizeStr": size_str,
         "recentFiles": top_recent,
+        "totalBytes": total_disk_bytes,      # <--- Lo añadimos
+        "totalStr": total_str,               # <--- Lo añadimos (ej. "924.3 GB")
+        "percentUsed": percent_used          # <--- Lo añadimos
     }
 
 
