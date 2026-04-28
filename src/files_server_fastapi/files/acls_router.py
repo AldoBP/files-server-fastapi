@@ -168,7 +168,7 @@ async def get_user_acls(
     for row in result.all():
         ruta, nombre, access_type, area_name = row
         shared_folders.append({
-            "path": ruta,
+            "path": "/" + ruta if not ruta.startswith("/") else ruta,
             "name": nombre,
             "permission": action_to_name.get(access_type, access_type),
             "area": area_name,
@@ -207,9 +207,10 @@ async def get_specific_user_acls(
     perm_result = await db.execute(select(Permisos.fastapi_action, Permisos.permiso_name))
     action_to_name = {action: name for action, name in perm_result.all()}
 
-    # 3. Convertir al formato simple que espera el frontend
+    # 3. Convertir al formato simple que espera el frontend (CON barra inicial)
     acls_dict = {}
     for ruta, access_type in result.all():
-        acls_dict[ruta] = action_to_name.get(access_type, access_type)
+        formatted_ruta = "/" + ruta if not ruta.startswith("/") else ruta
+        acls_dict[formatted_ruta] = action_to_name.get(access_type, access_type)
     
     return acls_dict
