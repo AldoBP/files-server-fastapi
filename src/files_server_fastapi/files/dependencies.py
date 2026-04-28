@@ -44,15 +44,15 @@ async def check_folder_access(
             user_ext_in_area = ext
             break
 
-    # 4. Generar lista de rutas (jerarquía) para herencia
-    logical_path = f"/{area.upper()}/{subpath.strip('/')}".replace("//", "/")
-    parts = logical_path.strip("/").split("/")
+    # 4. Generar lista de rutas (jerarquía) para herencia (SIN barra inicial para hacer match con DB)
+    logical_path = f"{area.upper()}/{subpath.strip('/')}".strip("/")
+    parts = logical_path.split("/")
     paths_to_check = []
-    current_path = ""
+    current_path_parts = []
     for part in parts:
         if part:
-            current_path += f"/{part}"
-            paths_to_check.append(current_path)
+            current_path_parts.append(part)
+            paths_to_check.append("/".join(current_path_parts))
 
     paths_to_check.reverse()  # Más específico primero
 
