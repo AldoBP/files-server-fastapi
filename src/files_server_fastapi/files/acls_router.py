@@ -55,8 +55,9 @@ async def create_acl(
         # Las rutas en DB se almacenan SIN barra inicial (ej: "VENTAS/test1/sub")
         # Normalizar siempre usando path_utils para eliminar prefijos de área duplicados
         clean_sub = normalize_subpath(req.area, acl_item.path)
-        # build_logical_path retorna "/AREA/sub" — quitamos la barra inicial para coincidir con DB
-        logical_path_full = build_logical_path(req.area, clean_sub).lstrip("/")
+        # build_logical_path retorna el path sin barra inicial (ej: "VENTAS/test1")
+        # coincidiendo con el formato de almacenamiento en la tabla rutas
+        logical_path_full = build_logical_path(req.area, clean_sub)
 
         parts = logical_path_full.split("/")
         folder_name = parts[-1] if parts else req.area.upper()

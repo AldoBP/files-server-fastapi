@@ -34,16 +34,20 @@ def build_logical_path(area: str, subpath: str, folder_name: str | None = None) 
     """
     Construye la ruta lógica completa normalizada.
 
+    Las rutas se almacenan en la base de datos SIN barra inicial,
+    por ejemplo: "VENTAS/test1/nueva" (no "/VENTAS/test1/nueva").
+    Esta convención es obligatoria para que las búsquedas en DB coincidan.
+
     Args:
         area:        Nombre del área (ej. "VENTAS")
         subpath:     Subpath relativo del frontend (puede traer el área como prefijo)
         folder_name: Nombre de la carpeta nueva (opcional, para creación de carpeta)
 
     Returns:
-        Ruta lógica limpia, ej: "/VENTAS/test1/nueva"
+        Ruta lógica limpia sin barra inicial, ej: "VENTAS/test1/nueva"
     """
     area_upper = area.strip().upper()
     clean_sub = normalize_subpath(area_upper, subpath)
 
     parts = [p for p in [area_upper, clean_sub, folder_name] if p]
-    return "/" + "/".join(parts)
+    return "/".join(parts)
