@@ -50,47 +50,50 @@ async def create_acl(
     processed_acls = []
 
     for acl_item in req.acls:
-        # ── DEBUG ─────────────────────────────────────────────────────────────
         print(f"[acls_router] INPUT  → area={req.area!r}  path={acl_item.path!r}  permission={acl_item.permission!r}")
-        # ─────────────────────────────────────────────────────────────────────
 
-        # Normalizar el path tal como viene del frontend (con barra inicial limpia)
-        raw_path = "/" + acl_item.path.strip("/")
-        parts_raw = raw_path.strip("/").split("/")
-        folder_name = parts_raw[-1] if parts_raw else req.area.upper()
+        # Las rutas en DB se almacenan SIN barra inicial (ej: "VENTAS/test1/sub")
+        # Normalizar siempre usando path_utils para eliminar prefijos de área duplicados
+        clean_sub = normalize_subpath(req.area, acl_item.path)
+        # build_logical_path retorna "/AREA/sub" — quitamos la barra inicial para coincidir con DB
+        logical_path_full = build_logical_path(req.area, clean_sub).lstrip("/")
 
-        # PASO 1 — Buscar el path exacto en DB (permite cross-área, ej: /INGENIERIA/... para usuario de VENTAS)
-        ruta_result = await db.execute(select(Rutas).where(Rutas.ruta == raw_path))
+        parts = logical_path_full.split("/")
+        folder_name = parts[-1] if parts else req.area.upper()
+
+        # Determinar el área real de la ruta (primer segmento del path)
+        first_area_of_path = parts[0].upper() if parts else req.area.upper()
+
+        # PASO 1 — Buscar con la ruta canónica normalizada (sin barra inicial)
+        ruta_result = await db.execute(select(Rutas).where(Rutas.ruta == logical_path_full))
         ruta_obj = ruta_result.scalars().first()
 
         if ruta_obj:
-            logical_path_full = raw_path
-            # ── DEBUG ─────────────────────────────────────────────────────────
-            print(f"[acls_router] FOUND  → ruta existente en DB: {logical_path_full!r} (area_id={ruta_obj.area_id})")
-            # ─────────────────────────────────────────────────────────────────
+            print(f"[acls_router] FOUND  → ruta canónica en DB: {logical_path_full!r} (area_id={ruta_obj.area_id})")
         else:
-            # PASO 2 — Normalizar el path y buscar OTRA VEZ con la forma canónica
-            # (cubre el caso donde el frontend omite el área como prefijo)
-            clean_sub = normalize_subpath(req.area, acl_item.path)
-            logical_path_full = build_logical_path(req.area, clean_sub)
-
-            ruta_norm_result = await db.execute(select(Rutas).where(Rutas.ruta == logical_path_full))
-            ruta_obj = ruta_norm_result.scalars().first()
+            # PASO 2 — Intentar también con barra inicial por compatibilidad con registros antiguos
+            ruta_slash_result = await db.execute(select(Rutas).where(Rutas.ruta == "/" + logical_path_full))
+            ruta_obj = ruta_slash_result.scalars().first()
 
             if ruta_obj:
-                # ── DEBUG ──────────────────────────────────────────────────────────
-                print(f"[acls_router] FOUND  → ruta canónica en DB: {logical_path_full!r} (area_id={ruta_obj.area_id})")
-                # ──────────────────────────────────────────────────────────────────
+                print(f"[acls_router] FOUND  → ruta con slash en DB: /{logical_path_full!r} (area_id={ruta_obj.area_id})")
             else:
-                # PASO 3 — Realmente no existe: crear la entrada en DB
-                # ── DEBUG ─────────────────────────────────────────────────────────
-                print(f"[acls_router] BUILD  → no encontrada, construyendo: {logical_path_full!r}")
-                # ─────────────────────────────────────────────────────────────────
+                # PASO 3 — Realmente no existe: buscar el área correcta para la nueva ruta
+                # Si la ruta es cross-área (ej: INGENIERIA/...) buscar el área correcta
+                area_for_ruta = area_obj
+                if first_area_of_path != req.area.strip().upper():
+                    cross_area_result = await db.execute(
+                        select(Area).where(Area.area_name.ilike(first_area_of_path))
+                    )
+                    cross_area = cross_area_result.scalars().first()
+                    if cross_area:
+                        area_for_ruta = cross_area
 
+                print(f"[acls_router] BUILD  → no encontrada, construyendo: {logical_path_full!r}")
                 ruta_obj = Rutas(
                     ruta=logical_path_full,
                     name=folder_name,
-                    area_id=area_obj.id
+                    area_id=area_for_ruta.id
                 )
                 db.add(ruta_obj)
                 await db.commit()

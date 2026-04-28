@@ -216,8 +216,7 @@ async def get_open_url(
 async def get_samba_trust_script():
     """
     Descarga un script `.bat` que agrega el servidor Samba a la zona de "Intranet Local"
-    en Windows. Esto resuelve el bloqueo 'Vista protegida / Zona Internet' que lanza Office
-    cuando se intenta abrir una ruta UNC generada desde el navegador.
+    en Windows e instruye a Office a no usar "Vista Protegida" para archivos de red.
     """
     host_match = re.match(r"^\\\\([^\\/]+)", SMB_BASE_DIR or "")
     host = host_match.group(1) if host_match else "127.0.0.1"
@@ -227,15 +226,23 @@ echo =========================================================
 echo Solucionando bloqueo de Office para el servidor: {host}
 echo =========================================================
 echo.
-echo Agregando {host} a la Intranet Local de Windows...
-echo.
-
-:: Agregar configuracion en el Registro usando PowerShell
+echo 1. Agregando {host} a la Intranet Local de Windows...
 powershell -Command "$ip = '{host}'; $path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\\ZoneMap\\Ranges\\RangeServer'; if (!(Test-Path $path)) {{ New-Item -Path $path -Force | Out-Null }}; Set-ItemProperty -Path $path -Name ':Range' -Value $ip; Set-ItemProperty -Path $path -Name 'file' -Value 1;"
-
 echo.
-echo [EXITO] Servidor agregado a la zona de confianza.
-echo Ahora los archivos de Word/Excel abriran correctamente sin bloqueos.
+
+echo 2. Desactivando bloqueos de Vista Protegida en Word/Excel para archivos en red...
+:: Word
+powershell -Command "$path = 'HKCU:\\Software\\Microsoft\\Office\\16.0\\Word\\Security\\ProtectedView'; if (!(Test-Path $path)) {{ New-Item -Path $path -Force | Out-Null }}; Set-ItemProperty -Path $path -Name 'DisableUNCLocations' -Value 1 -Type DWord;"
+:: Excel
+powershell -Command "$path = 'HKCU:\\Software\\Microsoft\\Office\\16.0\\Excel\\Security\\ProtectedView'; if (!(Test-Path $path)) {{ New-Item -Path $path -Force | Out-Null }}; Set-ItemProperty -Path $path -Name 'DisableUNCLocations' -Value 1 -Type DWord;"
+:: Habilitar red confiable en Office
+powershell -Command "$path = 'HKCU:\\Software\\Microsoft\\Office\\16.0\\Common\\Security'; if (!(Test-Path $path)) {{ New-Item -Path $path -Force | Out-Null }}; Set-ItemProperty -Path $path -Name 'DisableAllActiveX' -Value 0 -Type DWord;"
+echo.
+
+echo [EXITO] Configuracion aplicada.
+echo.
+echo IMPORTANTE: Si ya tienes Word o Excel abiertos, debes CERRARLOS y volver
+echo a abrirlos para que los cambios surtan efecto.
 echo.
 pause
 """
