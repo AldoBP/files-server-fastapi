@@ -637,7 +637,7 @@ wheels = [
 
 [[package]]
 name = "files-server-fastapi"
-version = "0.1.32"
+version = "0.1.33"
 source = { editable = "." }
 dependencies = [
     { name = "oauth2fast-fastapi" },
