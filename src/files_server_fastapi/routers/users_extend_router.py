@@ -76,7 +76,14 @@ async def create_user_extend(user_ext: UserExtendCreate, db: AsyncSession = Depe
 @router.get("/", response_model=list[Users_extend], summary="Ver vínculos de usuarios")
 async def get_users_extend(db: AsyncSession = Depends(get_db_session)):
     result = await db.execute(select(Users_extend))
-    return result.scalars().all()
+    return result.scalars().aclass UserExtendCreate(BaseModel):
+    user_id: int
+    area_id: int
+    rol_id: int
+    puesto: Optional[str] = None
+
+
+cll()
 
 
 # ==========================================

@@ -83,7 +83,7 @@ def _compute_stats(ruta_real: str) -> dict:
 @router.get("/stats", summary="Estadísticas de almacenamiento de un área")
 async def get_area_stats(
     area: str,
-    has_access: bool = Depends(check_folder_access),
+    access_type: str = Depends(check_folder_access),
 ):
     """
     Devuelve estadísticas del área completa:

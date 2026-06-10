@@ -11,12 +11,14 @@ from sqlmodel import select
 from oauth2fast_fastapi.models.user_model import User
 from oauth2fast_fastapi.utils.token_utils import verify_token
 from files_server_fastapi.files.constants import BASE_DIR, INLINE_MIME_TYPES
+from files_server_fastapi.files.dependencies import check_folder_access
 
 router = APIRouter()
 
 # Usa la conexión "auth" igual que oauth2fast_fastapi internamente
 get_auth_session = partial(get_db_session, connection_name="auth")
-
+# Conexión principal de la aplicación (para check_folder_access)
+get_files_session = get_db_session
 
 
 @router.get("/view", summary="Visualizar un archivo inline en el navegador (token por query param)")
@@ -27,6 +29,7 @@ async def view_file_inline(
     subpath: str = "/",
     token: str = Query(None, description="JWT token (alternativa al header Authorization)"),
     auth_session: AsyncSession = Depends(get_auth_session),
+    db: AsyncSession = Depends(get_files_session),
 ):
     """
     Sirve archivos visualizables (imágenes, PDF, texto) directamente en el navegador.
@@ -35,9 +38,11 @@ async def view_file_inline(
     - Header `Authorization: Bearer <token>` (uso normal en API)
     - Query param `?token=<token>` (para uso en `<img src>`, `window.open`, compartir links)
 
+    Verifica tanto autenticación (JWT válido) como autorización (permiso sobre la ruta).
+    Usuarios VIEW_ONLY (allow_view / allow_view_root) pueden visualizar pero NO descargar.
     Solo funciona con tipos de archivo que el navegador puede mostrar inline.
     """
-    # --- Autenticación: query param tiene prioridad, si no, intenta el header ---
+    # ── 1. Autenticación: query param tiene prioridad, si no intenta el header ──
     raw_token = token
     if not raw_token:
         auth_header = request.headers.get("Authorization", "")
@@ -68,7 +73,19 @@ async def view_file_inline(
     if current_user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
 
-    # --- Validación de ruta ---
+    # ── 2. Autorización: verificar permiso sobre la ruta (RBAC jerárquico) ──────
+    # check_folder_access se llama directamente (no vía Depends) porque el usuario
+    # ya fue autenticado manualmente arriba con el token de query param.
+    # Los usuarios VIEW_ONLY pasan este check (allow_view ∈ _READ_COMPATIBLE).
+    await check_folder_access(
+        area=area,
+        subpath=subpath,
+        required_access="allow_read",
+        current_user=current_user,
+        db=db,
+    )
+
+    # ── 3. Validación de ruta ────────────────────────────────────────────────────
     if ".." in subpath or ".." in filename:
         raise HTTPException(status_code=400, detail="Ruta o nombre de archivo inválido")
 
@@ -83,7 +100,7 @@ async def view_file_inline(
     if not os.path.isfile(ruta_real):
         raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {safe_filename}")
 
-    # --- Solo tipos visualizables ---
+    # ── 4. Solo tipos visualizables ─────────────────────────────────────────────
     mime_type, _ = mimetypes.guess_type(safe_filename)
     mime_type = mime_type or "application/octet-stream"
 
@@ -100,5 +117,6 @@ async def view_file_inline(
         headers={
             "Content-Disposition": f'inline; filename="{safe_filename}"',
             "Cache-Control": "private, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
         },
     )

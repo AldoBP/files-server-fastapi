@@ -11,7 +11,7 @@ router = APIRouter()
 async def list_directory(
     area: str,
     subpath: str = "/",
-    has_access: bool = Depends(check_folder_access)
+    access_type: str = Depends(check_folder_access)
 ):
     """Devuelve el contenido de una carpeta dentro del área indicada."""
     if ".." in subpath:

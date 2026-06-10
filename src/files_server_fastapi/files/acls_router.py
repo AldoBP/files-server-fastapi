@@ -1,8 +1,9 @@
 import os
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import get_current_verified_user, User
@@ -11,8 +12,32 @@ from files_server_fastapi.models.permisos_model import User_Ruta_Access, Permiso
 from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.users_extend_model import Users_extend
+from files_server_fastapi.models.rol_model import Rol
 
 router = APIRouter()
+
+# ── Sincronización Samba ────────────────────────────────────────────────────
+# La ruta al script se configura en .env con SAMBA_SYNC_SCRIPT.
+# Si no está definida o el archivo no existe (ej: entorno de desarrollo), se omite silenciosamente.
+_SAMBA_SYNC_SCRIPT: str = os.getenv("SAMBA_SYNC_SCRIPT", "")
+
+async def _sync_samba_background() -> None:
+    """Lanza el script de sincronización Samba en background sin bloquear la respuesta."""
+    if not _SAMBA_SYNC_SCRIPT or not os.path.exists(_SAMBA_SYNC_SCRIPT):
+        return
+    await asyncio.create_subprocess_exec(
+        "python3", _SAMBA_SYNC_SCRIPT,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+
+# ── Mapa: role_name → access_type por defecto ────────────────────────────────
+_ROL_DEFAULT_ACCESS: dict[str, str] = {
+    "SUPER_ADMIN": "allow_write",
+    "AREA_ADMIN":  "allow_write",
+    "EDITOR":      "allow_write",
+    "VIEWER":      "allow_read",
+}
 
 class AclDetail(BaseModel):
     path: str
@@ -214,3 +239,224 @@ async def get_specific_user_acls(
         acls_dict[formatted_ruta] = action_to_name.get(access_type, access_type)
     
     return acls_dict
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# ENDPOINTS NUEVOS — Sistema de permisos "Cerrado por defecto"
+# ════════════════════════════════════════════════════════════════════════════
+
+@router.post(
+    "/acls/users/{user_ext_id}/initialize",
+    summary="Inicializar permisos de un usuario recién registrado",
+)
+async def initialize_user_acl(
+    user_ext_id: int,
+    grant_full_area: bool = False,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Debe llamarse desde el frontend justo después de registrar un usuario
+    en oauth2fast_fastapi.
+
+    Por defecto bloquea todo el área del usuario (deny_all).
+    Si grant_full_area=True, otorga el permiso completo del área según su rol:
+      EDITOR / AREA_ADMIN / SUPER_ADMIN → allow_write
+      VIEWER                            → allow_read
+      Cualquier otro rol no mapeado     → deny_all
+    """
+    # 1. Resolver el users_extend por su propio id (el que maneja el frontend)
+    ext_result = await db.execute(select(Users_extend).where(Users_extend.id == user_ext_id))
+    user_ext = ext_result.scalars().first()
+    if not user_ext:
+        raise HTTPException(status_code=404, detail=f"Usuario con id {user_ext_id} no encontrado.")
+
+    # 2. Obtener el nombre del rol
+    rol_result = await db.execute(select(Rol).where(Rol.id == user_ext.rol_id))
+    rol = rol_result.scalars().first()
+    rol_name = rol.role_name.upper() if rol else ""
+
+    # 3. Obtener el área
+    area_result = await db.execute(select(Area).where(Area.id == user_ext.area_id))
+    area_obj = area_result.scalars().first()
+    if not area_obj:
+        raise HTTPException(status_code=404, detail="Área del usuario no encontrada.")
+
+    # 4. Buscar la ruta raíz del área (ruta == area_name en mayúsculas)
+    ruta_result = await db.execute(
+        select(Rutas)
+        .where(Rutas.area_id == user_ext.area_id)
+        .where(Rutas.ruta == area_obj.area_name.upper())
+        .limit(1)
+    )
+    ruta_raiz = ruta_result.scalars().first()
+    if not ruta_raiz:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ruta raíz del área '{area_obj.area_name}' no encontrada en la tabla rutas.",
+        )
+
+    # 5. Determinar el access_type
+    access_type = _ROL_DEFAULT_ACCESS.get(rol_name, "deny_all") if grant_full_area else "deny_all"
+
+    # 6. Upsert en user_ruta_access
+    acl_result = await db.execute(
+        select(User_Ruta_Access)
+        .where(User_Ruta_Access.user_id == user_ext.user_id)
+        .where(User_Ruta_Access.ruta_id == ruta_raiz.id)
+    )
+    existing = acl_result.scalars().first()
+    if existing:
+        existing.access_type = access_type
+    else:
+        db.add(User_Ruta_Access(
+            user_id=user_ext.user_id,
+            ruta_id=ruta_raiz.id,
+            access_type=access_type,
+        ))
+    await db.commit()
+
+    # 7. Sync Samba en background
+    asyncio.create_task(_sync_samba_background())
+
+    return {
+        "user_ext_id": user_ext_id,
+        "user_id": user_ext.user_id,
+        "area": area_obj.area_name,
+        "ruta_raiz": ruta_raiz.ruta,
+        "access_type": access_type,
+        "message": f"Usuario inicializado con acceso '{access_type}' en '{ruta_raiz.ruta}'.",
+    }
+
+
+@router.post(
+    "/acls/users/{user_ext_id}/grant-area",
+    summary="Habilitar acceso completo al área según el rol del usuario",
+)
+async def grant_full_area(
+    user_ext_id: int,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Cambia el acceso del usuario en la raíz de su área al permiso por defecto de su rol.
+    Equivalente a llamar a /initialize con grant_full_area=True.
+    No elimina los permisos granulares en subcarpetas — solo actualiza la raíz.
+    """
+    # Reutiliza la misma lógica de initialize con grant_full_area=True
+    return await initialize_user_acl(
+        user_ext_id=user_ext_id,
+        grant_full_area=True,
+        current_user=current_user,
+        db=db,
+    )
+
+
+@router.post(
+    "/acls/users/{user_ext_id}/revoke-area",
+    summary="Revocar todos los permisos del usuario y bloquear el área completa",
+)
+async def revoke_full_area(
+    user_ext_id: int,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Elimina TODOS los permisos granulares del usuario en user_ruta_access
+    y restaura únicamente el deny_all en la raíz de su área.
+    """
+    # 1. Resolver users_extend
+    ext_result = await db.execute(select(Users_extend).where(Users_extend.id == user_ext_id))
+    user_ext = ext_result.scalars().first()
+    if not user_ext:
+        raise HTTPException(status_code=404, detail=f"Usuario con id {user_ext_id} no encontrado.")
+
+    # 2. Obtener área y ruta raíz
+    area_result = await db.execute(select(Area).where(Area.id == user_ext.area_id))
+    area_obj = area_result.scalars().first()
+    if not area_obj:
+        raise HTTPException(status_code=404, detail="Área del usuario no encontrada.")
+
+    ruta_result = await db.execute(
+        select(Rutas)
+        .where(Rutas.area_id == user_ext.area_id)
+        .where(Rutas.ruta == area_obj.area_name.upper())
+        .limit(1)
+    )
+    ruta_raiz = ruta_result.scalars().first()
+    if not ruta_raiz:
+        raise HTTPException(status_code=404, detail="Ruta raíz del área no encontrada.")
+
+    # 3. Eliminar TODOS los ACLs del usuario
+    await db.execute(
+        delete(User_Ruta_Access).where(User_Ruta_Access.user_id == user_ext.user_id)
+    )
+    await db.commit()
+
+    # 4. Insertar deny_all en la raíz del área
+    db.add(User_Ruta_Access(
+        user_id=user_ext.user_id,
+        ruta_id=ruta_raiz.id,
+        access_type="deny_all",
+    ))
+    await db.commit()
+
+    # 5. Sync Samba en background
+    asyncio.create_task(_sync_samba_background())
+
+    return {
+        "user_ext_id": user_ext_id,
+        "user_id": user_ext.user_id,
+        "area": area_obj.area_name,
+        "access_type": "deny_all",
+        "message": "Todos los permisos revocados. Área bloqueada completamente.",
+    }
+
+
+@router.delete(
+    "/acls/users/{user_ext_id}/ruta/{ruta_id}",
+    summary="Eliminar el permiso explícito de un usuario en una ruta específica",
+)
+async def delete_user_acl(
+    user_ext_id: int,
+    ruta_id: int,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Elimina la fila de user_ruta_access para ese usuario y ruta.
+    La carpeta queda sin permiso explícito y hereda el del padre.
+    PRECAUCIÓN: Si eliminas el deny_all de la raíz sin otro permiso,
+    el usuario podría ganar acceso por herencia de rol.
+    """
+    # 1. Resolver real user_id
+    ext_result = await db.execute(select(Users_extend).where(Users_extend.id == user_ext_id))
+    user_ext = ext_result.scalars().first()
+    if not user_ext:
+        raise HTTPException(status_code=404, detail=f"Usuario con id {user_ext_id} no encontrado.")
+
+    # 2. Buscar el ACL existente
+    acl_result = await db.execute(
+        select(User_Ruta_Access)
+        .where(User_Ruta_Access.user_id == user_ext.user_id)
+        .where(User_Ruta_Access.ruta_id == ruta_id)
+    )
+    acl = acl_result.scalars().first()
+    if not acl:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No existe un permiso explícito para el usuario {user_ext_id} en la ruta {ruta_id}.",
+        )
+
+    # 3. Eliminar
+    await db.delete(acl)
+    await db.commit()
+
+    # 4. Sync Samba en background
+    asyncio.create_task(_sync_samba_background())
+
+    return {
+        "message": f"Permiso eliminado. La ruta {ruta_id} ahora hereda el permiso de su carpeta padre.",
+        "user_ext_id": user_ext_id,
+        "ruta_id": ruta_id,
+    }

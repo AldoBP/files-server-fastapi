@@ -12,7 +12,7 @@ from files_server_fastapi.files.constants import (
     OFFICE_PROTOCOLS,
     INLINE_MIME_TYPES,
 )
-from files_server_fastapi.files.dependencies import check_folder_access
+from files_server_fastapi.files.dependencies import check_folder_access, VIEW_ONLY_ACCESS_TYPES
 
 router = APIRouter()
 
@@ -20,7 +20,7 @@ _oauth2 = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
 
 
 def _build_unc_path(area: str, safe_subpath: str, safe_filename: str) -> str:
-    """Construye la ruta UNC de Windows: \\\\servidor\\share\\AREA\\subpath\\archivo"""
+    r"""Construye la ruta UNC de Windows: \\servidor\share\AREA\subpath\archivo"""
     parts = [SMB_BASE_DIR, area.upper()]
     if safe_subpath:
         parts.append(safe_subpath.replace("/", "\\"))
@@ -30,7 +30,6 @@ def _build_unc_path(area: str, safe_subpath: str, safe_filename: str) -> str:
 
 def _build_smb_url(area: str, safe_subpath: str, safe_filename: str) -> str:
     """Construye la URL smb:// para LibreOffice en Linux/Mac."""
-    # smb://host/share/AREA/subpath/archivo
     share = SMB_SHARE_NAME.replace("\\", "/")
     subpath_part = f"/{safe_subpath}" if safe_subpath else ""
     return f"smb://{SMB_HOST}/{share}/{area.upper()}{subpath_part}/{safe_filename}"
@@ -45,7 +44,7 @@ async def get_open_url(
     area: str,
     filename: str,
     subpath: str = "/",
-    has_access: bool = Depends(check_folder_access),
+    access_type: str = Depends(check_folder_access),
     bearer_token: str = Depends(_oauth2),
 ):
     """
@@ -59,8 +58,13 @@ async def get_open_url(
     - `platform`: sistema operativo destino (`windows`, `linux`, `any`, `browser`).
     - `edit`: `true` si la opción permite editar y guardar de vuelta al servidor.
 
+    Si el usuario tiene permiso **VIEW_ONLY** (`allow_view` o `allow_view_root`):
+    - Solo se retorna la opción de visor inline para archivos visualizables (PDF, imágenes).
+    - Para archivos de Office u otros tipos, se retorna `options: []` con un mensaje explicativo.
+    - La opción de descarga nunca se incluye.
+
     ### Archivos Office (.docx, .xlsx, .pptx, …)
-    Se devuelven 4 opciones:
+    Se devuelven 4 opciones (usuarios con permisos normales):
     1. **MS Office (Windows)** — protocolo `ms-word:ofe|u|UNC` para edición directa.
     2. **LibreOffice (Windows)** — ruta UNC directa (`\\\\srv\\share\\...`).
     3. **LibreOffice (Linux/Mac)** — URL `smb://host/share/...`.
@@ -68,10 +72,10 @@ async def get_open_url(
 
     ### Imágenes / PDF / Texto
     1. **Ver inline** — `/files/view?...&token=<jwt>`.
-    2. **Descargar**.
+    2. **Descargar** (solo si el usuario NO tiene VIEW_ONLY).
 
     ### Otros archivos
-    1. **Descargar**.
+    1. **Descargar** (solo si el usuario NO tiene VIEW_ONLY).
 
     ---
     > **Nota para el frontend:** usa `navigator.platform` / `navigator.userAgent`
@@ -95,15 +99,28 @@ async def get_open_url(
 
     ext = safe_filename.rsplit(".", 1)[-1].lower() if "." in safe_filename else ""
     office_protocol = OFFICE_PROTOCOLS.get(ext)
+    is_view_only = access_type in VIEW_ONLY_ACCESS_TYPES
 
     # ── Caso 1: Archivos Office ──────────────────────────────────────────────
     if office_protocol:
+        if is_view_only:
+            # VIEW_ONLY no puede abrir Office (abrir en Office implica tener el archivo localmente)
+            return {
+                "filename": safe_filename,
+                "ext": ext,
+                "is_office": True,
+                "view_only": True,
+                "options": [],
+                "message": (
+                    "Tu permiso es de solo visualización. "
+                    "Los archivos de Office no se pueden visualizar directamente en el navegador. "
+                    "Contacta a tu administrador si necesitas acceso de lectura o edición."
+                ),
+            }
+
         unc_path = _build_unc_path(area, safe_subpath, safe_filename)
         smb_url = _build_smb_url(area, safe_subpath, safe_filename)
-
-        download_url = (
-            f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"
-        )
+        download_url = f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"
 
         options = [
             {
@@ -175,24 +192,41 @@ async def get_open_url(
                 "platform": "browser",
                 "edit": False,
             },
-            {
+        ]
+
+        # La opción de descarga solo se agrega si el usuario NO es VIEW_ONLY
+        if not is_view_only:
+            options.append({
                 "app": "download",
                 "label": "Descargar",
                 "url": f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}",
                 "platform": "any",
                 "edit": False,
-            },
-        ]
+            })
 
         return {
             "filename": safe_filename,
             "ext": ext,
             "is_office": False,
+            "view_only": is_view_only,
             "mime_type": mime_type,
             "options": options,
         }
 
-    # ── Caso 3: Resto de archivos → solo descarga ────────────────────────────
+    # ── Caso 3: Resto de archivos → solo descarga (o mensaje si VIEW_ONLY) ───
+    if is_view_only:
+        return {
+            "filename": safe_filename,
+            "ext": ext,
+            "is_office": False,
+            "view_only": True,
+            "options": [],
+            "message": (
+                "Tu permiso es de solo visualización y este tipo de archivo "
+                "no se puede mostrar en el navegador."
+            ),
+        }
+
     return {
         "filename": safe_filename,
         "ext": ext,
