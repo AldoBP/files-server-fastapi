@@ -1,6 +1,6 @@
 from fastapi import HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import select, or_
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import get_current_verified_user, User
 from files_server_fastapi.models.permisos_model import User_Ruta_Access, Permisos, Permiso_rol
@@ -72,6 +72,9 @@ async def check_folder_access(
 
     paths_to_check.reverse()  # Más específico primero
 
+    # El path exacto que se está solicitando (el más específico, tras el reverse = índice 0)
+    exact_path = paths_to_check[0] if paths_to_check else area.upper()
+
     # 5. BUSQUEDA DE ACL (User_Ruta_Access) — Manda sobre el rol
     res_acl = await db.execute(
         select(Rutas.ruta, User_Ruta_Access)
@@ -87,6 +90,27 @@ async def check_folder_access(
             effective_type: str = acl_obj.access_type
 
             if effective_type == "deny_all":
+                # ── Excepción de navegación ────────────────────────────────────
+                # Solo se permite navegar (allow_view) si el path EXACTO solicitado
+                # (exact_path) o alguno de sus descendientes tiene un permiso positivo.
+                # Esto evita que /test2 sea accesible solo porque /test1 tiene permiso,
+                # ya que ambos son hijos de VENTAS pero son carpetas independientes.
+                if required_access == "allow_read":
+                    res_positive = await db.execute(
+                        select(User_Ruta_Access)
+                        .join(Rutas, Rutas.id == User_Ruta_Access.ruta_id)
+                        .where(User_Ruta_Access.user_id == current_user.id)
+                        .where(User_Ruta_Access.access_type != "deny_all")
+                        .where(
+                            or_(
+                                Rutas.ruta == exact_path,
+                                Rutas.ruta.like(exact_path + "/%"),
+                            )
+                        )
+                    )
+                    if res_positive.scalars().first():
+                        # El path solicitado (o un descendiente) tiene permisos → permite navegar
+                        return "allow_view"
                 raise HTTPException(status_code=403, detail="Acceso denegado (ACL: deny_all)")
 
             if required_access == "allow_write":
