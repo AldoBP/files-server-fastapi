@@ -17,14 +17,18 @@ import os
 import json
 import hmac
 import hashlib
-import time
 import httpx
-from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from functools import partial
+
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pgsqlasync2fast_fastapi.dependencies import get_db_session
-from oauth2fast_fastapi import get_current_verified_user, User
+from pgsqlasync2fast_fastapi import get_db_session
+from oauth2fast_fastapi import User
+from oauth2fast_fastapi.utils.token_utils import verify_token
+from sqlmodel import select
+
 from files_server_fastapi.files.constants import (
     BASE_DIR,
     ONLYOFFICE_MODE,
@@ -33,9 +37,18 @@ from files_server_fastapi.files.constants import (
     ONLYOFFICE_CALLBACK_BASE_URL,
     ONLYOFFICE_SUPPORTED_EXTS,
 )
-from files_server_fastapi.files.dependencies import check_folder_access, can_edit, can_upload
+from files_server_fastapi.files.dependencies import (
+    check_folder_access,
+    can_edit,
+    can_upload,
+    resolve_effective_access,
+    _resolve_user_context,
+)
 
 router = APIRouter()
+
+# Usa la conexión "auth" igual que oauth2fast_fastapi internamente
+get_auth_session = partial(get_db_session, connection_name="auth")
 
 # ── Mapeo extensión → tipo de documento OnlyOffice ────────────────────────────
 _EXT_TO_DOCTYPE: dict[str, str] = {
@@ -70,19 +83,71 @@ def _build_onlyoffice_jwt(payload: dict) -> str:
     return f"{header}.{body}.{sig_b64}"
 
 
+async def _authenticate_request(
+    request: Request,
+    token: str | None,
+    auth_session: AsyncSession,
+) -> User:
+    """
+    Autentica la petición aceptando el JWT de dos formas:
+      1. Query param ?token=<jwt>  (para pestañas nuevas / window.open)
+      2. Header Authorization: Bearer <jwt>  (uso normal de API)
+
+    Lanza 401 si no hay token o es inválido.
+    """
+    raw_token = token
+    if not raw_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            raw_token = auth_header[7:]
+
+    if not raw_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No se proporcionó token de autenticación",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = verify_token(raw_token)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido o expirado",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    email: str | None = payload.get("sub")
+    if not email:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token sin usuario")
+
+    result = await auth_session.execute(select(User).where(User.email == email))
+    current_user = result.scalar_one_or_none()
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
+
+    return current_user
+
+
 @router.get(
     "/onlyoffice/open",
     summary="Abrir un archivo con OnlyOffice (modo lectura o edición según permiso)",
 )
 async def onlyoffice_open(
+    request: Request,
     area: str,
     filename: str,
     subpath: str = "/",
-    access_type: str = Depends(check_folder_access),
-    current_user: User = Depends(get_current_verified_user),
+    token: str = Query(None, description="JWT token (alternativa al header Authorization, necesario al abrir en nueva pestaña)"),
+    auth_session: AsyncSession = Depends(get_auth_session),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Genera la información necesaria para que el frontend abra un archivo con OnlyOffice.
+
+    Acepta el token JWT de **dos formas**:
+    - Header `Authorization: Bearer <token>` (uso normal en API)
+    - Query param `?token=<token>` (necesario cuando se abre en nueva pestaña,
+      ya que el navegador no envía headers personalizados en `window.open()`)
 
     ### Permisos:
     - **web_view**: Abre en modo **solo lectura**. No puede editar ni guardar.
@@ -96,9 +161,27 @@ async def onlyoffice_open(
     Retorna la configuración JSON completa para inicializar el editor OnlyOffice embebido
     en la interfaz web con el SDK de OnlyOffice.
     """
+    # ── 1. Autenticación (acepta token por query param o por header) ─────────
+    current_user = await _authenticate_request(request, token, auth_session)
+
     if ".." in subpath or ".." in filename:
         raise HTTPException(status_code=400, detail="Ruta o nombre de archivo inválido")
 
+    # ── 2. Autorización: resolver permiso efectivo del usuario ───────────────
+    is_super_admin, user_ext_in_area = await _resolve_user_context(current_user, area, db)
+    effective = await resolve_effective_access(
+        area=area,
+        subpath=subpath,
+        user_id=current_user.id,
+        user_ext_in_area=user_ext_in_area,
+        is_super_admin=is_super_admin,
+        db=db,
+    )
+
+    if not effective or effective == "deny_all":
+        raise HTTPException(status_code=403, detail="Acceso denegado a esta ruta.")
+
+    # ── 3. Validar archivo ───────────────────────────────────────────────────
     safe_filename = os.path.basename(filename)
     safe_subpath = subpath.strip("/")
     ruta_real = (
@@ -118,35 +201,29 @@ async def onlyoffice_open(
         )
 
     doc_type = _EXT_TO_DOCTYPE.get(ext, "word")
-    user_can_edit = can_edit(access_type)
-    user_can_download = can_upload(access_type)
+    user_can_edit = can_edit(effective)
+    user_can_download = can_upload(effective)
 
     # ── Modo Desktop ─────────────────────────────────────────────────────────
     if ONLYOFFICE_MODE == "desktop":
-        response = {
+        return {
             "mode": "desktop",
             "filename": safe_filename,
             "ext": ext,
             "doc_type": doc_type,
             "can_edit": user_can_edit,
             "can_download": user_can_download,
+            "download_url": (
+                f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"
+            ),
             "message": (
                 "Descarga el archivo y ábrelo con OnlyOffice instalado en tu equipo."
                 if user_can_edit
                 else "Descarga el archivo para visualizarlo. Solo tienes permiso de lectura."
             ),
         }
-        # Solo incluir la URL de descarga si el usuario tiene permiso web_view+
-        # (todos pueden "ver", pero solo web_upload+ puede descargar para llevar)
-        # En modo desktop, para que pueda abrirlo hay que darle la URL de descarga
-        # aunque sea solo lectura — de lo contrario no podría ni verlo.
-        response["download_url"] = (
-            f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"
-        )
-        return response
 
     # ── Modo Server ───────────────────────────────────────────────────────────
-    # Construir la URL pública del documento (accesible desde el Document Server)
     doc_key = hashlib.md5(
         f"{area}/{safe_subpath}/{safe_filename}/{os.path.getmtime(ruta_real)}".encode()
     ).hexdigest()
@@ -191,7 +268,6 @@ async def onlyoffice_open(
         },
     }
 
-    # Firmar el config con JWT si está configurado
     if ONLYOFFICE_JWT_SECRET:
         config["token"] = _build_onlyoffice_jwt(config)
 
@@ -232,14 +308,13 @@ async def onlyoffice_callback(
     Referencia: https://api.onlyoffice.com/editors/callback
     """
     if ONLYOFFICE_MODE == "desktop":
-        # En modo desktop no existe callback — el Document Server no está involucrado
         return JSONResponse({"error": 0})
 
     body = await request.json()
     status_code = body.get("status")
 
     # Status 2 = documento listo para guardar
-    # Status 6 = documento guardado con errores (también descargamos por si acaso)
+    # Status 6 = documento guardado con errores
     # Otros status (1=editando, 3=error, 4=sin cambios, etc.) → no hacer nada
     if status_code not in (2, 6):
         return JSONResponse({"error": 0})
@@ -256,7 +331,6 @@ async def onlyoffice_callback(
         else os.path.join(BASE_DIR, area.upper(), safe_filename)
     )
 
-    # Descargar el archivo modificado desde la URL que nos manda el Document Server
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(download_url)
@@ -266,5 +340,4 @@ async def onlyoffice_callback(
     except Exception as e:
         return JSONResponse({"error": 1, "message": f"Error al guardar el archivo: {e}"})
 
-    # El Document Server espera {"error": 0} para confirmar que recibimos el guardado
     return JSONResponse({"error": 0})

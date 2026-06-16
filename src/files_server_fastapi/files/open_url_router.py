@@ -77,6 +77,8 @@ async def get_open_url(
         onlyoffice_url = (
             f"/files/onlyoffice/open?area={area}&subpath={subpath}&filename={safe_filename}"
         )
+        if bearer_token:
+            onlyoffice_url += f"&token={bearer_token}"
 
         options = [
             {
@@ -95,10 +97,14 @@ async def get_open_url(
 
         # Descarga solo para web_upload o web_full
         if user_can_upload:
+            download_url = f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"
+            if bearer_token:
+                download_url += f"&token={bearer_token}"
+            
             options.append({
                 "app": "download",
                 "label": "Descargar",
-                "url": f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}",
+                "url": download_url,
                 "platform": "any",
                 "edit": False,
                 "hint": "Descarga el archivo para abrirlo localmente.",
@@ -133,10 +139,14 @@ async def get_open_url(
 
         # Descarga solo para web_upload o web_full
         if user_can_upload:
+            download_url = f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"
+            if bearer_token:
+                download_url += f"&token={bearer_token}"
+
             options.append({
                 "app": "download",
                 "label": "Descargar",
-                "url": f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}",
+                "url": download_url,
                 "platform": "any",
                 "edit": False,
             })
@@ -151,6 +161,10 @@ async def get_open_url(
 
     # ── Caso 3: Resto de archivos ─────────────────────────────────────────────
     if user_can_upload:
+        download_url = f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"
+        if bearer_token:
+            download_url += f"&token={bearer_token}"
+            
         return {
             "filename": safe_filename,
             "ext": ext,
@@ -159,7 +173,7 @@ async def get_open_url(
                 {
                     "app": "download",
                     "label": "Descargar",
-                    "url": f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}",
+                    "url": download_url,
                     "platform": "any",
                     "edit": False,
                 }
