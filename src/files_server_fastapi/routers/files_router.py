@@ -10,6 +10,7 @@ from files_server_fastapi.files import (
     tree_router,
     acls_router,
     stats_router,
+    onlyoffice_router,
 )
 
 router = APIRouter(prefix="/files", tags=["Archivos del Sistema"])
@@ -24,3 +25,4 @@ router.include_router(delete_router.router)
 router.include_router(tree_router.router)
 router.include_router(acls_router.router)
 router.include_router(stats_router.router)
+router.include_router(onlyoffice_router.router)

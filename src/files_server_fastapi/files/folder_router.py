@@ -31,7 +31,7 @@ async def create_folder(
     print(f"[folder_router] INPUT  → area={req.area!r}  subpath={req.subpath!r}  folder_name={req.folder_name!r}")
     # ─────────────────────────────────────────────────────────────────────────
 
-    await check_folder_access(area=req.area, subpath=req.subpath, required_access="allow_write", current_user=current_user, db=db)
+    await check_folder_access(area=req.area, subpath=req.subpath, required_access="upload", current_user=current_user, db=db)
 
     if ".." in req.subpath or ".." in req.folder_name or "/" in req.folder_name:
         raise HTTPException(status_code=400, detail="Nombre de carpeta o ruta inválida")

@@ -14,3 +14,7 @@ class Users_extend(AuthModel, table=True):
     
     # Contraseña en texto plano para sincronización con el sistema de archivos centralizado de red
     samba_password: Optional[str] = Field(default=None)
+    
+    # Indica si el usuario tiene acceso Samba activado manualmente por el administrador.
+    # Cuando es True, los permisos web se replican automáticamente a Linux ACLs / Samba.
+    samba_enabled: bool = Field(default=False)

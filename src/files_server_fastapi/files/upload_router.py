@@ -24,7 +24,7 @@ async def upload_file(
     - **subpath**: Subcarpeta relativa (ej: '/' raíz, '/2024/Enero' subcarpeta)
     - **file**: El archivo a subir (multipart/form-data)
     """
-    await check_folder_access(area=area, subpath=subpath, required_access="allow_write", current_user=current_user, db=db)
+    await check_folder_access(area=area, subpath=subpath, required_access="upload", current_user=current_user, db=db)
 
     if ".." in subpath or ".." in (file.filename or ""):
         raise HTTPException(status_code=400, detail="Ruta o nombre de archivo inválido")

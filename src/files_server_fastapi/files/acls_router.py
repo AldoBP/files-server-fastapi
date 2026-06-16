@@ -33,11 +33,24 @@ async def _sync_samba_background() -> None:
 
 # ── Mapa: role_name → access_type por defecto ────────────────────────────────
 _ROL_DEFAULT_ACCESS: dict[str, str] = {
-    "SUPER_ADMIN": "allow_write",
-    "AREA_ADMIN":  "allow_write",
-    "EDITOR":      "allow_write",
-    "VIEWER":      "allow_read",
+    "SUPER_ADMIN": "web_full",
+    "AREA_ADMIN":  "web_full",
+    "EDITOR":      "web_upload",
+    "VIEWER":      "web_view",
 }
+
+
+async def _sync_samba_if_enabled(user_id: int, db: AsyncSession) -> None:
+    """
+    Sincroniza Samba en background SOLO si el usuario tiene samba_enabled=True.
+    Se llama automáticamente cada vez que se modifica un ACL web del usuario.
+    """
+    result = await db.execute(
+        select(Users_extend).where(Users_extend.user_id == user_id)
+    )
+    user_ext = result.scalars().first()
+    if user_ext and user_ext.samba_enabled:
+        asyncio.create_task(_sync_samba_background())
 
 class AclDetail(BaseModel):
     path: str
@@ -316,8 +329,8 @@ async def initialize_user_acl(
         ))
     await db.commit()
 
-    # 7. Sync Samba en background
-    asyncio.create_task(_sync_samba_background())
+    # 7. Sync Samba en background (solo si el usuario tiene samba_enabled=True)
+    await _sync_samba_if_enabled(user_ext.user_id, db)
 
     return {
         "user_ext_id": user_ext_id,
@@ -401,8 +414,8 @@ async def revoke_full_area(
     ))
     await db.commit()
 
-    # 5. Sync Samba en background
-    asyncio.create_task(_sync_samba_background())
+    # 5. Sync Samba en background (solo si el usuario tiene samba_enabled=True)
+    await _sync_samba_if_enabled(user_ext.user_id, db)
 
     return {
         "user_ext_id": user_ext_id,
@@ -452,8 +465,8 @@ async def delete_user_acl(
     await db.delete(acl)
     await db.commit()
 
-    # 4. Sync Samba en background
-    asyncio.create_task(_sync_samba_background())
+    # 4. Sync Samba en background (solo si el usuario tiene samba_enabled=True)
+    await _sync_samba_if_enabled(user_ext.user_id, db)
 
     return {
         "message": f"Permiso eliminado. La ruta {ruta_id} ahora hereda el permiso de su carpeta padre.",

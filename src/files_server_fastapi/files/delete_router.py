@@ -37,7 +37,7 @@ async def delete_item(
     await check_folder_access(
         area=req.area,
         subpath=req.subpath,
-        required_access="allow_write",
+        required_access="delete",
         current_user=current_user,
         db=db,
     )

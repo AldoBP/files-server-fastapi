@@ -8,6 +8,7 @@ from files_server_fastapi.routers import (
     permisos_router,
     users_extend_router,
     files_router,
+    samba_router,
 )
 
 
@@ -33,5 +34,6 @@ __all__ = [
     "permisos_router",
     "users_extend_router",
     "files_router",
+    "samba_router",
     "get_webdav_wsgi_app",
 ]
