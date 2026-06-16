@@ -39,7 +39,7 @@ async def view_file_inline(
     - Query param `?token=<token>` (para uso en `<img src>`, `window.open`, compartir links)
 
     Verifica tanto autenticación (JWT válido) como autorización (permiso sobre la ruta).
-    Usuarios VIEW_ONLY (allow_view / allow_view_root) pueden visualizar pero NO descargar.
+    Cualquier usuario con acceso (web_view o superior) puede visualizar archivos inline.
     Solo funciona con tipos de archivo que el navegador puede mostrar inline.
     """
     # ── 1. Autenticación: query param tiene prioridad, si no intenta el header ──
@@ -76,11 +76,11 @@ async def view_file_inline(
     # ── 2. Autorización: verificar permiso sobre la ruta (RBAC jerárquico) ──────
     # check_folder_access se llama directamente (no vía Depends) porque el usuario
     # ya fue autenticado manualmente arriba con el token de query param.
-    # Los usuarios VIEW_ONLY pasan este check (allow_view ∈ _READ_COMPATIBLE).
+    # Cualquier nivel de acceso (web_view o superior) puede visualizar archivos.
     await check_folder_access(
         area=area,
         subpath=subpath,
-        required_access="allow_read",
+        required_access="view",
         current_user=current_user,
         db=db,
     )

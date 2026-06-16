@@ -9,7 +9,7 @@ class Permisos(AuthModel, table=True):
     permiso_name: str = Field(nullable=False)
     description: Optional[str] = Field(default=None)
     linux_acl: str = Field(default="---", description="Ejemplo: rwx, r-x, ---")
-    fastapi_action: str = Field(default="deny_all", description="Ejemplo: allow_write, allow_read, deny_all")
+    fastapi_action: str = Field(default="deny_all", description="Ejemplo: web_view, web_edit, web_upload, web_full, deny_all")
 
 
 # Tabla ACL: Control de Acceso Granular por Usuario a una Ruta
@@ -19,7 +19,7 @@ class User_Ruta_Access(AuthModel, table=True):
     user_id: int = Field(foreign_key="users.id")
     ruta_id: int = Field(foreign_key="rutas.id")
     
-    # access_type puede ser: "allow_read", "allow_write", "deny_all"
+    # access_type puede ser: "web_view", "web_edit", "web_upload", "web_full", "deny_all"
     access_type: str = Field(nullable=False)
 
 

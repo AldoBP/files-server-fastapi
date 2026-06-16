@@ -3,7 +3,7 @@ import mimetypes
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
 from files_server_fastapi.files.constants import BASE_DIR, INLINE_MIME_TYPES
-from files_server_fastapi.files.dependencies import check_folder_access, VIEW_ONLY_ACCESS_TYPES
+from files_server_fastapi.files.dependencies import check_folder_access, can_upload
 
 router = APIRouter()
 
@@ -16,19 +16,20 @@ async def download_file(
     access_type: str = Depends(check_folder_access),
 ):
     """
-    Sirve un archivo desde el share Samba.
+    Sirve un archivo desde el servidor de archivos.
 
     - PDFs e imágenes → inline en el navegador.
     - Otros tipos → descarga forzada.
-    - Usuarios con permiso VIEW_ONLY (allow_view / allow_view_root) → 403.
+    - Usuarios con permiso `web_view` o `web_edit` → 403 (sin descarga).
+    - Solo `web_upload` y `web_full` pueden descargar.
     """
-    # Bloquear descarga para usuarios con permiso de solo visualización
-    if access_type in VIEW_ONLY_ACCESS_TYPES:
+    # Solo web_upload y web_full pueden descargar
+    if not can_upload(access_type):
         raise HTTPException(
             status_code=403,
             detail=(
                 "No tienes permiso para descargar este archivo. "
-                "Tu acceso es de solo visualización. Usa el visor en línea."
+                "Tu nivel de acceso solo permite visualización o edición en línea."
             ),
         )
 
