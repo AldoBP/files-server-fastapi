@@ -181,6 +181,14 @@ async def onlyoffice_open(
     if not effective or effective == "deny_all":
         raise HTTPException(status_code=403, detail="Acceso denegado a esta ruta.")
 
+    print("\n[DEBUG ONLYOFFICE PERMISOS]")
+    print(f"  Usuario ID: {current_user.id}")
+    print(f"  Area Solicitada: {area}, Subpath: {subpath}")
+    print(f"  is_super_admin: {is_super_admin}")
+    print(f"  Rol ID (user_ext): {user_ext_in_area.rol_id if user_ext_in_area else 'No en area'}")
+    print(f"  Permiso Efectivo Devuelto: '{effective}'")
+
+
     # ── 3. Validar archivo ───────────────────────────────────────────────────
     safe_filename = os.path.basename(filename)
     safe_subpath = subpath.strip("/")
@@ -203,6 +211,10 @@ async def onlyoffice_open(
     doc_type = _EXT_TO_DOCTYPE.get(ext, "word")
     user_can_edit = can_edit(effective)
     user_can_download = can_upload(effective)
+    
+    print(f"  user_can_edit final: {user_can_edit}")
+    print(f"  user_can_download final: {user_can_download}")
+    print("------------------------------------------\n")
 
     # ── Modo Desktop ─────────────────────────────────────────────────────────
     if ONLYOFFICE_MODE == "desktop":
@@ -228,9 +240,13 @@ async def onlyoffice_open(
         f"{area}/{safe_subpath}/{safe_filename}/{os.path.getmtime(ruta_real)}".encode()
     ).hexdigest()
 
+    # Generamos un JWT exclusivo para autorizar la descarga interna de este archivo
+    payload_descarga = {"area": area, "subpath": subpath, "filename": safe_filename}
+    token_descarga = _build_onlyoffice_jwt(payload_descarga) if ONLYOFFICE_JWT_SECRET else ""
+
     document_url = (
-        f"{ONLYOFFICE_CALLBACK_BASE_URL}/files/view"
-        f"?area={area}&subpath={subpath}&filename={safe_filename}"
+        f"{ONLYOFFICE_CALLBACK_BASE_URL}/files/onlyoffice/download"
+        f"?area={area}&subpath={subpath}&filename={safe_filename}&token={token_descarga}"
     )
     callback_url = (
         f"{ONLYOFFICE_CALLBACK_BASE_URL}/files/onlyoffice/callback"
@@ -341,3 +357,66 @@ async def onlyoffice_callback(
         return JSONResponse({"error": 1, "message": f"Error al guardar el archivo: {e}"})
 
     return JSONResponse({"error": 0})
+
+
+@router.get(
+    "/onlyoffice/download",
+    summary="Descarga interna para el Document Server",
+    include_in_schema=False,
+)
+async def onlyoffice_download(
+    area: str,
+    filename: str,
+    subpath: str = "/",
+    token: str = "",
+):
+    """
+    Endpoint de uso exclusivo para OnlyOffice Document Server.
+    No requiere token de usuario final, valida el JWT firmado con ONLYOFFICE_JWT_SECRET
+    que viene directamente en la URL.
+    """
+    if ONLYOFFICE_MODE == "desktop":
+        raise HTTPException(status_code=403, detail="Modo desktop no soporta descargas de servidor")
+
+    if ONLYOFFICE_JWT_SECRET:
+        if not token:
+            raise HTTPException(status_code=401, detail="Falta firma del Document Server en la URL")
+
+        try:
+            # Validamos manualmente con la misma lógica exacta que _build_onlyoffice_jwt
+            import base64
+            parts = token.split(".")
+            if len(parts) != 3:
+                raise ValueError("Formato JWT incorrecto")
+            
+            header_b64, body_b64, signature_b64 = parts
+            
+            # Recalcular la firma
+            signature = hmac.new(
+                ONLYOFFICE_JWT_SECRET.encode(),
+                f"{header_b64}.{body_b64}".encode(),
+                hashlib.sha256
+            ).digest()
+            expected_sig_b64 = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+            
+            if not hmac.compare_digest(signature_b64, expected_sig_b64):
+                raise ValueError("La firma no coincide")
+        except Exception as e:
+            raise HTTPException(status_code=401, detail=f"Firma inválida: {e}")
+
+    if ".." in subpath or ".." in filename:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+
+    safe_filename = os.path.basename(filename)
+    safe_subpath = subpath.strip("/")
+    ruta_real = (
+        os.path.join(BASE_DIR, area.upper(), safe_subpath, safe_filename)
+        if safe_subpath
+        else os.path.join(BASE_DIR, area.upper(), safe_filename)
+    )
+
+    if not os.path.isfile(ruta_real):
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(path=ruta_real, filename=safe_filename)

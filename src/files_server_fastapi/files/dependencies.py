@@ -148,6 +148,9 @@ async def resolve_effective_access(
             if r not in role_perms_map:
                 role_perms_map[r] = set()
             role_perms_map[r].add(p_action)
+            
+        print("\n[DEBUG ACL-ROLES] paths_to_check:", paths_to_check)
+        print("[DEBUG ACL-ROLES] role_perms_map extraído de la BD:", role_perms_map)
 
         for path_in_tree in paths_to_check:
             if path_in_tree in role_perms_map:

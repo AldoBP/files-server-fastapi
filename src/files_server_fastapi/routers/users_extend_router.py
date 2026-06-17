@@ -10,17 +10,45 @@ from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.rol_model import Rol
 
 
+from pydantic import BaseModel, Field, model_validator
+
 class UserExtendCreate(BaseModel):
     user_id: int
     area_id: int
-    rol_id: int
+    rol_id: int = Field(alias="role_id", default=None)
     puesto: Optional[str] = None
 
+    @model_validator(mode='before')
+    @classmethod
+    def allow_both_names(cls, data: dict):
+        if 'role_id' in data and 'rol_id' not in data:
+            data['rol_id'] = data['role_id']
+        elif 'rol_id' in data and 'role_id' not in data:
+            data['role_id'] = data['rol_id']
+        return data
+
+class UserExtendResponse(BaseModel):
+    id: int
+    user_id: int
+    area_id: int
+    rol_id: int
+    role_id: int  # Añadimos alias virtual para el frontend
+    puesto: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
 
 class UserExtendUpdate(BaseModel):
     area_id: Optional[int] = None
     rol_id: Optional[int] = None
     puesto: Optional[str] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def allow_both_names(cls, data: dict):
+        if 'role_id' in data and 'rol_id' not in data:
+            data['rol_id'] = data['role_id']
+        return data
 
 
 router = APIRouter(prefix="/users-extend", tags=["Extensión de Usuarios"])
@@ -73,19 +101,32 @@ async def create_user_extend(user_ext: UserExtendCreate, db: AsyncSession = Depe
 # ==========================================
 # GET /users-extend/ — Listar todos
 # ==========================================
-@router.get("/", response_model=list[Users_extend], summary="Ver vínculos de usuarios")
+@router.get("/", response_model=list[UserExtendResponse], summary="Ver vínculos de usuarios")
 async def get_users_extend(db: AsyncSession = Depends(get_db_session)):
     result = await db.execute(select(Users_extend))
-    return result.scalars().all()
+    users = result.scalars().all()
+    # Construimos la respuesta manual inyectando role_id
+    response = []
+    for u in users:
+        u_dict = u.model_dump()
+        u_dict["role_id"] = u.rol_id
+        response.append(u_dict)
+    return response
 
 
 # ==========================================
 # GET /users-extend/by-area/{area_id}
 # ==========================================
-@router.get("/by-area/{area_id}", response_model=list[Users_extend], summary="Obtener usuarios de un área")
+@router.get("/by-area/{area_id}", response_model=list[UserExtendResponse], summary="Obtener usuarios de un área")
 async def get_users_by_area(area_id: int, db: AsyncSession = Depends(get_db_session)):
     result = await db.execute(select(Users_extend).where(Users_extend.area_id == area_id))
-    return result.scalars().all()
+    users = result.scalars().all()
+    response = []
+    for u in users:
+        u_dict = u.model_dump()
+        u_dict["role_id"] = u.rol_id
+        response.append(u_dict)
+    return response
 
 
 # ==========================================
@@ -105,9 +146,16 @@ async def get_user_permissions(user_id: int, db: AsyncSession = Depends(get_db_s
 # ==========================================
 # PATCH /users-extend/{user_id} — Actualizar
 # ==========================================
-@router.patch("/{user_id}", response_model=Users_extend, summary="Actualizar datos de extensión de usuario")
+@router.patch("/{user_id}", response_model=UserExtendResponse, summary="Actualizar datos de extensión de usuario")
 async def update_user_extend(user_id: int, user_ext_update: UserExtendUpdate, db: AsyncSession = Depends(get_db_session)):
-    result = await db.execute(select(Users_extend).where(Users_extend.user_id == user_id))
+    from sqlmodel import or_
+    
+    # Buscamos por user_id (lo ideal) o por el ID interno del registro (si el frontend se confunde)
+    result = await db.execute(
+        select(Users_extend).where(
+            or_(Users_extend.user_id == user_id, Users_extend.id == user_id)
+        )
+    )
     user_ext = result.scalars().first()
 
     if not user_ext:
@@ -119,7 +167,18 @@ async def update_user_extend(user_id: int, user_ext_update: UserExtendUpdate, db
     # Validar area_id y rol_id si se están actualizando
     await _validate_area_and_rol(user_ext_update.area_id, user_ext_update.rol_id, db)
 
+    # IMPRIMIMOS EL PAYLOAD PARA VER QUÉ LLEGA REALMENTE
+    print(f"\n[DEBUG] PAYLOAD RECIBIDO DEL FRONTEND PARA USER {user_id}: {user_ext_update.model_dump()}")
+    print(f"[DEBUG] EXCLUDE UNSET: {user_ext_update.model_dump(exclude_unset=True)}\n")
+
+    # Extraer los datos enviados por el frontend
     update_data = user_ext_update.model_dump(exclude_unset=True)
+    
+    # ¡TRUCO! Si nuestro model_validator metió el rol_id, Pydantic lo excluye en exclude_unset
+    # porque no venía originalmente con ese nombre exacto. Lo forzamos a entrar a mano:
+    if user_ext_update.rol_id is not None:
+        update_data["rol_id"] = user_ext_update.rol_id
+
     for key, value in update_data.items():
         setattr(user_ext, key, value)
 
@@ -127,7 +186,9 @@ async def update_user_extend(user_id: int, user_ext_update: UserExtendUpdate, db
     await db.commit()
     await db.refresh(user_ext)
 
-    return user_ext
+    u_dict = user_ext.model_dump()
+    u_dict["role_id"] = user_ext.rol_id
+    return u_dict
 
 
 # ==========================================
