@@ -3,7 +3,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, or_
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import get_current_verified_user, User
@@ -138,6 +138,19 @@ async def create_acl(
                 await db.commit()
                 await db.refresh(ruta_obj)
 
+        # Si el frontend manda INHERIT, significa que queremos borrar la regla (heredar del padre)
+        if acl_item.permission == "INHERIT":
+            acl_result = await db.execute(
+                select(User_Ruta_Access)
+                .where(User_Ruta_Access.user_id == real_user_id)
+                .where(User_Ruta_Access.ruta_id == ruta_obj.id)
+            )
+            existing_acl = acl_result.scalars().first()
+            if existing_acl:
+                await db.delete(existing_acl)
+                await db.commit()
+            continue
+
         # Consultar la DB dinámicamente para averiguar qué acción implica el permiso solicitado de frontend
         perm_result = await db.execute(select(Permisos).where(Permisos.permiso_name.ilike(acl_item.permission)))
         permiso_obj = perm_result.scalars().first()
@@ -224,13 +237,23 @@ async def get_specific_user_acls(
     """
     Devuelve las reglas actuales de un usuario en un formato simple para el modal de React.
     Ejemplo: {"/ruta/1": "EDITOR", "/ruta/2": "VIEWER"}
+
+    Acepta tanto users_extend.id como users_extend.user_id para ser robusto
+    ante inconsistencias del frontend al enviar IDs.
     """
-    # 0. Traducir el ID que manda el frontend (users_extend.id) al verdadero user_id
-    ext_result = await db.execute(select(Users_extend).where(Users_extend.id == user_id))
+    # 0. Buscar primero por users_extend.id (PK interna), luego por user_id real
+    ext_result = await db.execute(
+        select(Users_extend).where(
+            or_(Users_extend.id == user_id, Users_extend.user_id == user_id)
+        )
+    )
     user_ext_obj = ext_result.scalars().first()
-    
+
     if not user_ext_obj:
-        raise HTTPException(status_code=404, detail=f"No se encontró ninguna extensión de usuario con el ID {user_id}.")
+        raise HTTPException(
+            status_code=404,
+            detail=f"No se encontró ningún usuario con el ID {user_id} (ni como users_extend.id ni como user_id)."
+        )
 
     real_user_id = user_ext_obj.user_id
 

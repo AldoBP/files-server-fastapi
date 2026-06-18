@@ -11,4 +11,6 @@ Paquete de sub-módulos para el router de archivos.
   tree_router.py        — GET  /files/tree
   onlyoffice_router.py  — GET  /files/onlyoffice/open
                           POST /files/onlyoffice/callback
+  search_router.py      — GET  /files/search         (archivos y carpetas)
+                          GET  /files/search/users    (usuarios, solo admins)
 """
