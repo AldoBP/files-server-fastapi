@@ -179,12 +179,26 @@ async def update_user_extend(user_id: int, user_ext_update: UserExtendUpdate, db
     if user_ext_update.rol_id is not None:
         update_data["rol_id"] = user_ext_update.rol_id
 
+    # 1. Antes de actualizar, guardar el rol y área actuales
+    old_rol_id = user_ext.rol_id
+    old_area_id = user_ext.area_id
+
     for key, value in update_data.items():
         setattr(user_ext, key, value)
 
     db.add(user_ext)
     await db.commit()
     await db.refresh(user_ext)
+
+    # 3. NUEVO: Si el rol o el área cambiaron, sincronizar el acceso de la raíz
+    if old_rol_id != user_ext.rol_id or old_area_id != user_ext.area_id:
+        from files_server_fastapi.files.acls_router import initialize_user_acl
+        await initialize_user_acl(
+            user_id=user_ext.user_id,
+            grant_full_area=True,
+            current_user=None,
+            db=db
+        )
 
     u_dict = user_ext.model_dump()
     u_dict["role_id"] = user_ext.rol_id

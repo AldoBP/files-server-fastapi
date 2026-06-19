@@ -69,15 +69,14 @@ async def create_acl(
 ):
     """
     Crea o actualiza los accesos (ACLs) enviados desde el frontend.
+    req.user_id es el auth user_id real (columna user_ruta_access.user_id).
     """
-    # 0. Traducir el ID que manda el frontend (users_extend.id) al verdadero user_id de la tabla Users
-    ext_result = await db.execute(select(Users_extend).where(Users_extend.id == req.user_id))
-    user_ext_obj = ext_result.scalars().first()
-    
-    if not user_ext_obj:
-        raise HTTPException(status_code=404, detail=f"No se encontró ninguna extensión de usuario activa con el ID {req.user_id}.")
+    # 0. Validar que el usuario tenga un perfil en users_extend
+    ext_result = await db.execute(select(Users_extend).where(Users_extend.user_id == req.user_id))
+    if not ext_result.scalars().first():
+        raise HTTPException(status_code=404, detail=f"Usuario con user_id {req.user_id} no encontrado.")
 
-    real_user_id = user_ext_obj.user_id
+    real_user_id = req.user_id
 
     # 1. Verificar si el Área existe para crear la Ruta adecuadamente
     area_result = await db.execute(select(Area).where(Area.area_name.ilike(req.area)))
@@ -235,16 +234,16 @@ async def get_specific_user_acls(
     db: AsyncSession = Depends(get_db_session)
 ):
     """
-    Devuelve las reglas actuales de un usuario en un formato simple para el modal de React.
-    Ejemplo: {"/ruta/1": "EDITOR", "/ruta/2": "VIEWER"}
+    Devuelve las reglas actuales de un usuario en un formato enriquecido para el modal de React.
+    Formato: { "/VENTAS/test1": { "permission": "Vista, Edición y Subida", "ruta_id": 42 } }
 
-    Acepta tanto users_extend.id como users_extend.user_id para ser robusto
-    ante inconsistencias del frontend al enviar IDs.
+    Acepta el auth user_id directamente (el mismo que está en user_ruta_access.user_id).
+    Por compatibilidad también acepta users_extend.id si el user_id no se encuentra como auth user_id.
     """
-    # 0. Buscar primero por users_extend.id (PK interna), luego por user_id real
+    # Buscar por auth user_id directamente; fallback a users_extend.id por compatibilidad
     ext_result = await db.execute(
         select(Users_extend).where(
-            or_(Users_extend.id == user_id, Users_extend.user_id == user_id)
+            or_(Users_extend.user_id == user_id, Users_extend.id == user_id)
         )
     )
     user_ext_obj = ext_result.scalars().first()
@@ -252,29 +251,35 @@ async def get_specific_user_acls(
     if not user_ext_obj:
         raise HTTPException(
             status_code=404,
-            detail=f"No se encontró ningún usuario con el ID {user_id} (ni como users_extend.id ni como user_id)."
+            detail=f"No se encontró ningún usuario con el ID {user_id}."
         )
 
     real_user_id = user_ext_obj.user_id
 
-    # 1. Consultar los ACLs en la base de datos
+    # 1. Consultar los ACLs en la base de datos — incluir Rutas.id para que
+    #    el frontend pueda usarlo directamente en las llamadas DELETE.
     result = await db.execute(
-        select(Rutas.ruta, User_Ruta_Access.access_type)
+        select(Rutas.id, Rutas.ruta, User_Ruta_Access.access_type)
         .join(User_Ruta_Access, User_Ruta_Access.ruta_id == Rutas.id)
         .where(User_Ruta_Access.user_id == real_user_id)
     )
-    
+
     # 2. Obtener el mapeo de acciones a nombres (Reverse lookup dinámico)
     perm_result = await db.execute(select(Permisos.fastapi_action, Permisos.permiso_name))
     action_to_name = {action: name for action, name in perm_result.all()}
 
-    # 3. Convertir al formato simple que espera el frontend (CON barra inicial)
+    # 3. Convertir al nuevo formato enriquecido que espera el frontend:
+    #    { "/VENTAS/test1": { "permission": "Vista, Edición y Subida", "ruta_id": 42 } }
     acls_dict = {}
-    for ruta, access_type in result.all():
+    for ruta_id, ruta, access_type in result.all():
         formatted_ruta = "/" + ruta if not ruta.startswith("/") else ruta
-        acls_dict[formatted_ruta] = action_to_name.get(access_type, access_type)
-    
+        acls_dict[formatted_ruta] = {
+            "permission": action_to_name.get(access_type, access_type),
+            "ruta_id": ruta_id,
+        }
+
     return acls_dict
+
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -282,11 +287,11 @@ async def get_specific_user_acls(
 # ════════════════════════════════════════════════════════════════════════════
 
 @router.post(
-    "/acls/users/{user_ext_id}/initialize",
+    "/acls/users/{user_id}/initialize",
     summary="Inicializar permisos de un usuario recién registrado",
 )
 async def initialize_user_acl(
-    user_ext_id: int,
+    user_id: int,
     grant_full_area: bool = False,
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db_session),
@@ -301,11 +306,11 @@ async def initialize_user_acl(
       VIEWER                            → allow_read
       Cualquier otro rol no mapeado     → deny_all
     """
-    # 1. Resolver el users_extend por su propio id (el que maneja el frontend)
-    ext_result = await db.execute(select(Users_extend).where(Users_extend.id == user_ext_id))
+    # 1. Resolver users_extend por auth user_id (el ID real del sistema de autenticación)
+    ext_result = await db.execute(select(Users_extend).where(Users_extend.user_id == user_id))
     user_ext = ext_result.scalars().first()
     if not user_ext:
-        raise HTTPException(status_code=404, detail=f"Usuario con id {user_ext_id} no encontrado.")
+        raise HTTPException(status_code=404, detail=f"Usuario con user_id {user_id} no encontrado.")
 
     # 2. Obtener el nombre del rol
     rol_result = await db.execute(select(Rol).where(Rol.id == user_ext.rol_id))
@@ -356,8 +361,7 @@ async def initialize_user_acl(
     await _sync_samba_if_enabled(user_ext.user_id, db)
 
     return {
-        "user_ext_id": user_ext_id,
-        "user_id": user_ext.user_id,
+        "user_id": user_id,
         "area": area_obj.area_name,
         "ruta_raiz": ruta_raiz.ruta,
         "access_type": access_type,
@@ -366,11 +370,11 @@ async def initialize_user_acl(
 
 
 @router.post(
-    "/acls/users/{user_ext_id}/grant-area",
+    "/acls/users/{user_id}/grant-area",
     summary="Habilitar acceso completo al área según el rol del usuario",
 )
 async def grant_full_area(
-    user_ext_id: int,
+    user_id: int,
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -381,7 +385,7 @@ async def grant_full_area(
     """
     # Reutiliza la misma lógica de initialize con grant_full_area=True
     return await initialize_user_acl(
-        user_ext_id=user_ext_id,
+        user_id=user_id,
         grant_full_area=True,
         current_user=current_user,
         db=db,
@@ -389,11 +393,11 @@ async def grant_full_area(
 
 
 @router.post(
-    "/acls/users/{user_ext_id}/revoke-area",
+    "/acls/users/{user_id}/revoke-area",
     summary="Revocar todos los permisos del usuario y bloquear el área completa",
 )
 async def revoke_full_area(
-    user_ext_id: int,
+    user_id: int,
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -401,11 +405,11 @@ async def revoke_full_area(
     Elimina TODOS los permisos granulares del usuario en user_ruta_access
     y restaura únicamente el deny_all en la raíz de su área.
     """
-    # 1. Resolver users_extend
-    ext_result = await db.execute(select(Users_extend).where(Users_extend.id == user_ext_id))
+    # 1. Resolver users_extend por auth user_id
+    ext_result = await db.execute(select(Users_extend).where(Users_extend.user_id == user_id))
     user_ext = ext_result.scalars().first()
     if not user_ext:
-        raise HTTPException(status_code=404, detail=f"Usuario con id {user_ext_id} no encontrado.")
+        raise HTTPException(status_code=404, detail=f"Usuario con user_id {user_id} no encontrado.")
 
     # 2. Obtener área y ruta raíz
     area_result = await db.execute(select(Area).where(Area.id == user_ext.area_id))
@@ -441,8 +445,7 @@ async def revoke_full_area(
     await _sync_samba_if_enabled(user_ext.user_id, db)
 
     return {
-        "user_ext_id": user_ext_id,
-        "user_id": user_ext.user_id,
+        "user_id": user_id,
         "area": area_obj.area_name,
         "access_type": "deny_all",
         "message": "Todos los permisos revocados. Área bloqueada completamente.",
@@ -450,11 +453,11 @@ async def revoke_full_area(
 
 
 @router.delete(
-    "/acls/users/{user_ext_id}/ruta/{ruta_id}",
+    "/acls/users/{user_id}/ruta/{ruta_id}",
     summary="Eliminar el permiso explícito de un usuario en una ruta específica",
 )
 async def delete_user_acl(
-    user_ext_id: int,
+    user_id: int,
     ruta_id: int,
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db_session),
@@ -465,34 +468,28 @@ async def delete_user_acl(
     PRECAUCIÓN: Si eliminas el deny_all de la raíz sin otro permiso,
     el usuario podría ganar acceso por herencia de rol.
     """
-    # 1. Resolver real user_id
-    ext_result = await db.execute(select(Users_extend).where(Users_extend.id == user_ext_id))
-    user_ext = ext_result.scalars().first()
-    if not user_ext:
-        raise HTTPException(status_code=404, detail=f"Usuario con id {user_ext_id} no encontrado.")
-
-    # 2. Buscar el ACL existente
+    # 1. Buscar el ACL directamente por auth user_id (sin traducción intermedia)
     acl_result = await db.execute(
         select(User_Ruta_Access)
-        .where(User_Ruta_Access.user_id == user_ext.user_id)
+        .where(User_Ruta_Access.user_id == user_id)
         .where(User_Ruta_Access.ruta_id == ruta_id)
     )
     acl = acl_result.scalars().first()
     if not acl:
         raise HTTPException(
             status_code=404,
-            detail=f"No existe un permiso explícito para el usuario {user_ext_id} en la ruta {ruta_id}.",
+            detail=f"No existe un permiso explícito para el usuario {user_id} en la ruta {ruta_id}.",
         )
 
-    # 3. Eliminar
+    # 2. Eliminar
     await db.delete(acl)
     await db.commit()
 
-    # 4. Sync Samba en background (solo si el usuario tiene samba_enabled=True)
-    await _sync_samba_if_enabled(user_ext.user_id, db)
+    # 3. Sync Samba en background (solo si el usuario tiene samba_enabled=True)
+    await _sync_samba_if_enabled(user_id, db)
 
     return {
         "message": f"Permiso eliminado. La ruta {ruta_id} ahora hereda el permiso de su carpeta padre.",
-        "user_ext_id": user_ext_id,
+        "user_id": user_id,
         "ruta_id": ruta_id,
     }
