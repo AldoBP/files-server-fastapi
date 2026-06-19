@@ -240,11 +240,8 @@ async def get_specific_user_acls(
     Acepta el auth user_id directamente (el mismo que está en user_ruta_access.user_id).
     Por compatibilidad también acepta users_extend.id si el user_id no se encuentra como auth user_id.
     """
-    # Buscar por auth user_id directamente; fallback a users_extend.id por compatibilidad
     ext_result = await db.execute(
-        select(Users_extend).where(
-            or_(Users_extend.user_id == user_id, Users_extend.id == user_id)
-        )
+        select(Users_extend).where(Users_extend.user_id == user_id)
     )
     user_ext_obj = ext_result.scalars().first()
 
