@@ -54,7 +54,7 @@ get_auth_session = partial(get_db_session, connection_name="auth")
 _EXT_TO_DOCTYPE: dict[str, str] = {
     # Documentos de texto → "word"
     "doc":  "word", "docx": "word", "dot": "word", "dotx": "word",
-    "odt":  "word", "rtf":  "word", "txt": "word",
+    "odt":  "word", "rtf":  "word", "txt": "word", "pdf": "word",
     # Hojas de cálculo → "cell"
     "xls":  "cell", "xlsx": "cell", "xlsm": "cell", "ods": "cell", "csv": "cell",
     # Presentaciones → "slide"

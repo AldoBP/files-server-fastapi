@@ -95,6 +95,22 @@ async def get_open_url(
             }
         ]
 
+        # Permitir también "Ver en el navegador" si el tipo MIME es visualizable (ej. PDF)
+        mime_type, _ = mimetypes.guess_type(safe_filename)
+        mime_type = mime_type or "application/octet-stream"
+        if mime_type in INLINE_MIME_TYPES:
+            view_url = f"/files/view?area={area}&subpath={subpath}&filename={safe_filename}"
+            if bearer_token:
+                view_url += f"&token={bearer_token}"
+            options.append({
+                "app": "view",
+                "label": "Ver en el navegador",
+                "url": view_url,
+                "platform": "browser",
+                "edit": False,
+                "hint": "Visualización rápida en el navegador."
+            })
+
         # Descarga solo para web_upload o web_full
         if user_can_upload:
             download_url = f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"

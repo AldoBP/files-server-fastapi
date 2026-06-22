@@ -39,7 +39,7 @@ ONLYOFFICE_CALLBACK_BASE_URL: str = os.getenv("ONLYOFFICE_CALLBACK_BASE_URL", ""
 # El frontend usará esto para decidir si mostrar el botón "Abrir en OnlyOffice"
 ONLYOFFICE_SUPPORTED_EXTS: frozenset[str] = frozenset({
     # Documentos de texto
-    "doc", "docx", "dot", "dotx", "odt", "rtf", "txt",
+    "doc", "docx", "dot", "dotx", "odt", "rtf", "txt", "pdf",
     # Hojas de cálculo
     "xls", "xlsx", "xlsm", "ods", "csv",
     # Presentaciones
