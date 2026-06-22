@@ -161,7 +161,7 @@ async def _walk_and_search(
 )
 async def search_files(
     q: str = Query(..., min_length=1, description="Texto a buscar (nombre de archivo o carpeta)"),
-    area: str = Query(..., description="Área donde buscar (ej: Ventas)"),
+    area: str = Query(None, description="Área donde buscar (ej: Ventas). Si se omite, busca en todas las áreas accesibles."),
     limit: int = Query(50, ge=1, le=200, description="Número máximo de resultados"),
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db_session),
@@ -170,68 +170,103 @@ async def search_files(
     Devuelve archivos y carpetas cuyo nombre contenga el texto buscado,
     filtrando automáticamente según los permisos del usuario.
 
+    - Si no se especifica un área, busca en el área del usuario y en las carpetas que le han compartido.
     - El usuario solo verá resultados de rutas a las que tiene acceso.
-    - Las carpetas bloqueadas (deny_all o sin regla) se omiten completamente,
-      incluyendo todo su contenido interior.
-    - Máximo `limit` resultados (por defecto 50).
+    - Las carpetas bloqueadas (deny_all o sin regla) se omiten completamente.
     """
-    if ".." in q or ".." in area:
+    if ".." in q or (area and ".." in area):
         raise HTTPException(status_code=400, detail="Parámetros inválidos.")
 
-    # 1. Resolver contexto de permisos del usuario
-    is_super_admin, user_ext_in_area = await _resolve_user_context(current_user, area, db)
+    areas_to_search = set()
 
-    # 2. Verificar que el usuario tiene al menos acceso de vista al área raíz
-    root_access = await resolve_effective_access(
-        area=area,
-        subpath="/",
-        user_id=current_user.id,
-        user_ext_in_area=user_ext_in_area,
-        is_super_admin=is_super_admin,
-        db=db,
-    )
+    if area:
+        areas_to_search.add(area.upper())
+    else:
+        # 1. Obtener áreas donde el usuario tiene un perfil (rol)
+        res_ext = await db.execute(
+            select(Users_extend, Area)
+            .join(Area, Area.id == Users_extend.area_id)
+            .where(Users_extend.user_id == current_user.id)
+        )
+        for ext, area_obj in res_ext.all():
+            areas_to_search.add(area_obj.area_name.upper())
 
-    if root_access is None or root_access == "deny_all":
-        raise HTTPException(status_code=403, detail="No tienes acceso a esta área.")
+        # 2. Obtener áreas donde tiene algún permiso explícito (ACL)
+        res_acls_areas = await db.execute(
+            select(Rutas.ruta)
+            .join(User_Ruta_Access, User_Ruta_Access.ruta_id == Rutas.id)
+            .where(User_Ruta_Access.user_id == current_user.id)
+            .where(User_Ruta_Access.access_type != "deny_all")
+        )
+        for ruta in res_acls_areas.scalars().all():
+            areas_to_search.add(ruta.split("/")[0].upper())
 
-    # 3. Pre-cargar ACLs del usuario para optimizar las queries recursivas
-    area_prefix = area.upper()
+        # 3. Si es super admin, tiene acceso a todo.
+        is_super_admin = False
+        res_roles = await db.execute(
+            select(Rol.role_name)
+            .join(Users_extend, Users_extend.rol_id == Rol.id)
+            .where(Users_extend.user_id == current_user.id)
+        )
+        if any(r.upper() == "SUPER_ADMIN" for r in res_roles.scalars().all()):
+            res_all_areas = await db.execute(select(Area.area_name))
+            for a_name in res_all_areas.scalars().all():
+                areas_to_search.add(a_name.upper())
+
+    if not areas_to_search:
+        return {"query": q, "area": "Todas", "total": 0, "results": []}
+
+    # Pre-cargar TODAS las ACLs del usuario para optimizar las queries recursivas
     res_bulk = await db.execute(
         select(Rutas.ruta, User_Ruta_Access)
         .join(User_Ruta_Access, User_Ruta_Access.ruta_id == Rutas.id)
         .where(User_Ruta_Access.user_id == current_user.id)
-        .where(
-            or_(
-                Rutas.ruta == area_prefix,
-                Rutas.ruta.like(area_prefix + "/%"),
-            )
-        )
     )
     preloaded_acls: dict = {row[0]: row[1] for row in res_bulk.all()}
 
-    # 4. Recorrer el sistema de archivos buscando coincidencias
-    root_dir = os.path.join(BASE_DIR, area.upper())
-    if not os.path.isdir(root_dir):
-        raise HTTPException(status_code=404, detail=f"El área '{area}' no existe en el servidor.")
-
     results: list = []
-    await _walk_and_search(
-        area=area,
-        base_path=root_dir,
-        rel_path="",
-        query=q,
-        user_id=current_user.id,
-        user_ext_in_area=user_ext_in_area,
-        is_super_admin=is_super_admin,
-        db=db,
-        preloaded_acls=preloaded_acls,
-        results=results,
-        max_results=limit,
-    )
+
+    for current_area in areas_to_search:
+        if len(results) >= limit:
+            break
+
+        is_super_admin, user_ext_in_area = await _resolve_user_context(current_user, current_area, db)
+
+        # Verificar acceso a la raíz de este área
+        root_access = await resolve_effective_access(
+            area=current_area,
+            subpath="/",
+            user_id=current_user.id,
+            user_ext_in_area=user_ext_in_area,
+            is_super_admin=is_super_admin,
+            db=db,
+            preloaded_acls=preloaded_acls
+        )
+
+        if root_access is None or root_access == "deny_all":
+            continue
+
+        root_dir = os.path.join(BASE_DIR, current_area.upper())
+        if not os.path.isdir(root_dir):
+            continue
+
+        await _walk_and_search(
+            area=current_area,
+            base_path=root_dir,
+            rel_path="",
+            query=q,
+            user_id=current_user.id,
+            user_ext_in_area=user_ext_in_area,
+            is_super_admin=is_super_admin,
+            db=db,
+            preloaded_acls=preloaded_acls,
+            results=results,
+            max_results=limit,
+        )
 
     return {
         "query": q,
-        "area": area,
+        "area": area if area else "Todas",
         "total": len(results),
         "results": results,
     }
