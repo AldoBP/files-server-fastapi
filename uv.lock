@@ -658,7 +658,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "oauth2fast-fastapi", specifier = "==0.4.3" },
+    { name = "oauth2fast-fastapi", specifier = "==0.4.4" },
     { name = "psycopg2-binary", specifier = ">=2.9" },
     { name = "python-dotenv" },
     { name = "wsgidav", specifier = ">=4.3" },
@@ -1043,7 +1043,7 @@ wheels = [
 
 [[package]]
 name = "oauth2fast-fastapi"
-version = "0.4.3"
+version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "argon2-cffi" },
@@ -1055,9 +1055,9 @@ dependencies = [
     { name = "python-multipart" },
     { name = "tools2fast-fastapi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/e2/b015269f9415c97631c64e36ca809e9b62058727fe4a569636b9536839b5/oauth2fast_fastapi-0.4.3.tar.gz", hash = "sha256:487808349899f03aee6638c4ac9570595e997367c3addd798df091d63bd69268", size = 27789, upload-time = "2026-06-12T20:54:05.534Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/a7/338e5a6650e065bdddbca7236911f5c2568a9c370553b25c7676eae4ea34/oauth2fast_fastapi-0.4.4.tar.gz", hash = "sha256:be87054ce4e4ce3fa1c16745a3142e700de190d6b5bb00ac1a9bec723cf18bdb", size = 27964, upload-time = "2026-06-26T19:08:11.402Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/9b/4bb5d6d3478b15583926ff23211a5bd847c6a03b4855c5002f20ec896cb8/oauth2fast_fastapi-0.4.3-py3-none-any.whl", hash = "sha256:7ad3e8c544a3f8fffc3b2b9e212f5b82288d7abc54774b960b863ddf1c3749ca", size = 25044, upload-time = "2026-06-12T20:54:04.316Z" },
+    { url = "https://files.pythonhosted.org/packages/66/53/332f314cf05487d13696a9c0694da35a7b62f973ca108f44cac1ec588792/oauth2fast_fastapi-0.4.4-py3-none-any.whl", hash = "sha256:82c9c65cfb3f7791f97f73255818f302b443f90a9508cfb2f9684fbd78e15d7a", size = 25185, upload-time = "2026-06-26T19:08:10.3Z" },
 ]
 
 [[package]]

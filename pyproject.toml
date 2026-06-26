@@ -16,7 +16,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "oauth2fast-fastapi==0.4.3",
+    "oauth2fast-fastapi==0.4.4",
     "python-dotenv",
     "wsgidav>=4.3",
     "psycopg2-binary>=2.9",
