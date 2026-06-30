@@ -12,7 +12,6 @@ from files_server_fastapi.files.dependencies import (
     can_edit,
     can_upload,
 )
-from files_server_fastapi.files.media_token import generate_media_token
 from oauth2fast_fastapi import get_current_verified_user, User
 
 router = APIRouter()
@@ -71,15 +70,6 @@ async def get_open_url(
     user_can_edit = can_edit(access_type)
     user_can_upload = can_upload(access_type)
 
-    # Media token de corta vida para inyectar en view URLs.
-    # El JWT de sesión nunca aparece en ninguna URL.
-    media_token = generate_media_token(
-        area=area,
-        subpath=subpath,
-        filename=safe_filename,
-        user_id=current_user.id,
-    )
-
     # ── Caso 1: Archivos de Office / OnlyOffice ──────────────────────────────
     if is_onlyoffice_file:
         onlyoffice_url = (
@@ -105,10 +95,7 @@ async def get_open_url(
         mime_type, _ = mimetypes.guess_type(safe_filename)
         mime_type = mime_type or "application/octet-stream"
         if mime_type in INLINE_MIME_TYPES:
-            view_url = (
-                f"/files/view?area={area}&subpath={subpath}&filename={safe_filename}"
-                f"&media_token={media_token}"
-            )
+            view_url = f"/files/view?area={area}&subpath={subpath}&filename={safe_filename}"
             options.append({
                 "app": "view",
                 "label": "Ver en el navegador",
@@ -143,10 +130,7 @@ async def get_open_url(
     mime_type = mime_type or "application/octet-stream"
 
     if mime_type in INLINE_MIME_TYPES:
-        view_url = (
-            f"/files/view?area={area}&subpath={subpath}&filename={safe_filename}"
-            f"&media_token={media_token}"
-        )
+        view_url = f"/files/view?area={area}&subpath={subpath}&filename={safe_filename}"
 
         options = [
             {
