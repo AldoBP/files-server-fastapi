@@ -1,7 +1,6 @@
 import os
 import mimetypes
 from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.security import OAuth2PasswordBearer
 from files_server_fastapi.files.constants import (
     BASE_DIR,
     ONLYOFFICE_SUPPORTED_EXTS,
@@ -16,8 +15,6 @@ from files_server_fastapi.files.dependencies import (
 
 router = APIRouter()
 
-_oauth2 = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
-
 
 @router.get(
     "/open-url",
@@ -29,7 +26,6 @@ async def get_open_url(
     filename: str,
     subpath: str = "/",
     access_type: str = Depends(check_folder_access),
-    bearer_token: str = Depends(_oauth2),
 ):
     """
     Devuelve un array **`options`** con las maneras de abrir el archivo según el permiso del usuario.
@@ -77,8 +73,6 @@ async def get_open_url(
         onlyoffice_url = (
             f"/files/onlyoffice/open?area={area}&subpath={subpath}&filename={safe_filename}"
         )
-        if bearer_token:
-            onlyoffice_url += f"&token={bearer_token}"
 
         options = [
             {
@@ -100,8 +94,6 @@ async def get_open_url(
         mime_type = mime_type or "application/octet-stream"
         if mime_type in INLINE_MIME_TYPES:
             view_url = f"/files/view?area={area}&subpath={subpath}&filename={safe_filename}"
-            if bearer_token:
-                view_url += f"&token={bearer_token}"
             options.append({
                 "app": "view",
                 "label": "Ver en el navegador",
@@ -114,9 +106,6 @@ async def get_open_url(
         # Descarga solo para web_upload o web_full
         if user_can_upload:
             download_url = f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"
-            if bearer_token:
-                download_url += f"&token={bearer_token}"
-            
             options.append({
                 "app": "download",
                 "label": "Descargar",
@@ -140,8 +129,6 @@ async def get_open_url(
 
     if mime_type in INLINE_MIME_TYPES:
         view_url = f"/files/view?area={area}&subpath={subpath}&filename={safe_filename}"
-        if bearer_token:
-            view_url += f"&token={bearer_token}"
 
         options = [
             {
@@ -156,8 +143,6 @@ async def get_open_url(
         # Descarga solo para web_upload o web_full
         if user_can_upload:
             download_url = f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"
-            if bearer_token:
-                download_url += f"&token={bearer_token}"
 
             options.append({
                 "app": "download",
@@ -178,9 +163,6 @@ async def get_open_url(
     # ── Caso 3: Resto de archivos ─────────────────────────────────────────────
     if user_can_upload:
         download_url = f"/files/download?area={area}&subpath={subpath}&filename={safe_filename}"
-        if bearer_token:
-            download_url += f"&token={bearer_token}"
-            
         return {
             "filename": safe_filename,
             "ext": ext,

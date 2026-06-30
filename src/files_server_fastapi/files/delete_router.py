@@ -29,11 +29,17 @@ async def delete_item(
     """
     Elimina un archivo o carpeta del área indicada.
 
-    - Requiere permiso **allow_write** sobre el subpath.
+    - Requiere permiso **web_full** sobre el subpath.
     - Si el objetivo es una carpeta **no vacía**, se elimina recursivamente todo su contenido.
     - Si era una carpeta registrada en la base de datos, también se elimina su registro (y los de subcarpetas).
+    - La base de datos se limpia **solo si** la eliminación física tuvo éxito, evitando registros huérfanos.
     """
-    # Permiso de escritura sobre el directorio padre
+    # ── 1. Validar rutas ANTES de cualquier lógica de negocio ─────────────────
+    # req.name nunca debe contener separadores de directorio ni secuencias de traversal.
+    if ".." in req.subpath or ".." in req.name or "/" in req.name:
+        raise HTTPException(status_code=400, detail="Ruta o nombre inválido")
+
+    # ── 2. Verificar permiso de eliminación ───────────────────────────────────
     await check_folder_access(
         area=req.area,
         subpath=req.subpath,
@@ -42,9 +48,7 @@ async def delete_item(
         db=db,
     )
 
-    if ".." in req.subpath or ".." in req.name or ("/" in req.name and req.name != "/"):
-        raise HTTPException(status_code=400, detail="Ruta o nombre inválido")
-
+    # ── 3. Construir rutas ────────────────────────────────────────────────────
     safe_name = os.path.basename(req.name)
     safe_subpath = req.subpath.strip("/")
     ruta_real = (
@@ -58,27 +62,37 @@ async def delete_item(
 
     es_carpeta = os.path.isdir(ruta_real)
 
+    # Prefijo lógico para limpiar registros en BD (coincide con el formato sin barra inicial)
+    logical_prefix = (
+        f"{req.area.upper()}/{safe_subpath}/{safe_name}".replace("//", "/")
+        if safe_subpath
+        else f"{req.area.upper()}/{safe_name}"
+    )
+
+    # ── 4. Eliminación física primero — BD solo si el disco tuvo éxito ────────
     try:
         if es_carpeta:
             shutil.rmtree(ruta_real)
-
-            # Eliminar también todos los registros de Rutas que comiencen con ese path lógico
-            logical_prefix = (
-                f"/{req.area.upper()}/{safe_subpath}/{safe_name}".replace("//", "/")
-                if safe_subpath
-                else f"/{req.area.upper()}/{safe_name}"
-            )
-            await db.execute(
-                sql_delete(Rutas).where(Rutas.ruta.like(f"{logical_prefix}%"))
-            )
-            await db.commit()
-
-            return {"message": f"Carpeta '{safe_name}' eliminada exitosamente", "type": "folder", "path": ruta_real}
         else:
             os.remove(ruta_real)
-            return {"message": f"Archivo '{safe_name}' eliminado exitosamente", "type": "file", "path": ruta_real}
-
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permiso denegado por el sistema operativo")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # ── 5. Limpiar registros en BD (solo si la eliminación física fue exitosa) ─
+    # Se eliminan tanto la carpeta como todas sus subcarpetas registradas en Rutas.
+    # Para archivos regulares no suele haber entrada en Rutas, pero el DELETE
+    # es seguro (no borra nada si no hay coincidencia).
+    await db.execute(
+        sql_delete(Rutas).where(Rutas.ruta.like(f"{logical_prefix}%"))
+    )
+    await db.commit()
+
+    tipo = "folder" if es_carpeta else "file"
+    label = "Carpeta" if es_carpeta else "Archivo"
+    return {
+        "message": f"{label} '{safe_name}' eliminado exitosamente",
+        "type": tipo,
+        "path": ruta_real,
+    }

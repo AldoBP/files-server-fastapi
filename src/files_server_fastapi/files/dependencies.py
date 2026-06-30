@@ -1,3 +1,4 @@
+import logging
 from fastapi import HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, or_
@@ -8,6 +9,8 @@ from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.users_extend_model import Users_extend
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.rol_model import Rol
+
+logger = logging.getLogger(__name__)
 
 
 # ── Niveles de acceso web (de mayor a menor prioridad) ──────────────────────
@@ -149,8 +152,7 @@ async def resolve_effective_access(
                 role_perms_map[r] = set()
             role_perms_map[r].add(p_action)
             
-        print("\n[DEBUG ACL-ROLES] paths_to_check:", paths_to_check)
-        print("[DEBUG ACL-ROLES] role_perms_map extraído de la BD:", role_perms_map)
+        logger.debug("ACL-ROLES paths_to_check=%s role_perms_map=%s", paths_to_check, role_perms_map)
 
         for path_in_tree in paths_to_check:
             if path_in_tree in role_perms_map:

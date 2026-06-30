@@ -2,7 +2,7 @@ import os
 import mimetypes
 from functools import partial
 
-from fastapi import APIRouter, HTTPException, Query, Request, Depends, status
+from fastapi import APIRouter, HTTPException, Request, Depends, status
 from fastapi.responses import FileResponse
 from pgsqlasync2fast_fastapi import get_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,33 +21,33 @@ get_auth_session = partial(get_db_session, connection_name="auth")
 get_files_session = get_db_session
 
 
-@router.get("/view", summary="Visualizar un archivo inline en el navegador (token por query param)")
+@router.get("/view", summary="Visualizar un archivo inline en el navegador")
 async def view_file_inline(
     request: Request,
     area: str,
     filename: str,
     subpath: str = "/",
-    token: str = Query(None, description="JWT token (alternativa al header Authorization)"),
     auth_session: AsyncSession = Depends(get_auth_session),
     db: AsyncSession = Depends(get_files_session),
 ):
     """
     Sirve archivos visualizables (imágenes, PDF, texto) directamente en el navegador.
 
-    Acepta el token JWT de dos formas:
-    - Header `Authorization: Bearer <token>` (uso normal en API)
-    - Query param `?token=<token>` (para uso en `<img src>`, `window.open`, compartir links)
+    Requiere autenticación **exclusivamente** via header:
+        Authorization: Bearer <token>
+
+    El token ya NO se acepta como query parameter. Esta decisión evita que el JWT
+    quede expuesto en el historial del navegador, logs de servidor o cabeceras Referer.
 
     Verifica tanto autenticación (JWT válido) como autorización (permiso sobre la ruta).
     Cualquier usuario con acceso (web_view o superior) puede visualizar archivos inline.
     Solo funciona con tipos de archivo que el navegador puede mostrar inline.
     """
-    # ── 1. Autenticación: query param tiene prioridad, si no intenta el header ──
-    raw_token = token
-    if not raw_token:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            raw_token = auth_header[7:]
+    # ── 1. Autenticación: solo se acepta el header Authorization ──────────────
+    raw_token: str | None = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        raw_token = auth_header[7:]
 
     if not raw_token:
         raise HTTPException(

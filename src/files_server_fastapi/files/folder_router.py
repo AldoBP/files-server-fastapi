@@ -1,4 +1,5 @@
 import os
+import logging
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,8 @@ from files_server_fastapi.files.dependencies import check_folder_access
 from files_server_fastapi.files.path_utils import normalize_subpath, build_logical_path
 from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.area_model import Area
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -27,9 +30,7 @@ async def create_folder(
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db_session)
 ):
-    # ── DEBUG ─────────────────────────────────────────────────────────────────
-    print(f"[folder_router] INPUT  → area={req.area!r}  subpath={req.subpath!r}  folder_name={req.folder_name!r}")
-    # ─────────────────────────────────────────────────────────────────────────
+    logger.debug("folder_router INPUT area=%r subpath=%r folder_name=%r", req.area, req.subpath, req.folder_name)
 
     await check_folder_access(area=req.area, subpath=req.subpath, required_access="upload", current_user=current_user, db=db)
 
@@ -39,9 +40,7 @@ async def create_folder(
     # Normalizar el subpath: quitar el área si el frontend ya la incluyó
     clean_subpath = normalize_subpath(req.area, req.subpath)
 
-    # ── DEBUG ─────────────────────────────────────────────────────────────────
-    print(f"[folder_router] CLEAN  → clean_subpath={clean_subpath!r}")
-    # ─────────────────────────────────────────────────────────────────────────
+    logger.debug("folder_router CLEAN clean_subpath=%r", clean_subpath)
 
     # Ruta física en disco
     if clean_subpath:
@@ -52,9 +51,7 @@ async def create_folder(
     # Ruta lógica para guardar en DB (siempre limpia)
     logical_path_db = build_logical_path(req.area, clean_subpath, req.folder_name)
 
-    # ── DEBUG ─────────────────────────────────────────────────────────────────
-    print(f"[folder_router] RESULT → ruta_fisica={ruta_final!r}  logical_path_db={logical_path_db!r}")
-    # ─────────────────────────────────────────────────────────────────────────
+    logger.debug("folder_router RESULT ruta_fisica=%r logical_path_db=%r", ruta_final, logical_path_db)
 
     try:
         os.makedirs(ruta_final, exist_ok=False)

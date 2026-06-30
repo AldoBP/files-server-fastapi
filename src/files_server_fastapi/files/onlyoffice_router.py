@@ -18,6 +18,7 @@ import json
 import hmac
 import hashlib
 import httpx
+import logging
 from functools import partial
 
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks, Query, status
@@ -44,6 +45,8 @@ from files_server_fastapi.files.dependencies import (
     resolve_effective_access,
     _resolve_user_context,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -181,14 +184,6 @@ async def onlyoffice_open(
     if not effective or effective == "deny_all":
         raise HTTPException(status_code=403, detail="Acceso denegado a esta ruta.")
 
-    print("\n[DEBUG ONLYOFFICE PERMISOS]")
-    print(f"  Usuario ID: {current_user.id}")
-    print(f"  Area Solicitada: {area}, Subpath: {subpath}")
-    print(f"  is_super_admin: {is_super_admin}")
-    print(f"  Rol ID (user_ext): {user_ext_in_area.rol_id if user_ext_in_area else 'No en area'}")
-    print(f"  Permiso Efectivo Devuelto: '{effective}'")
-
-
     # ── 3. Validar archivo ───────────────────────────────────────────────────
     safe_filename = os.path.basename(filename)
     safe_subpath = subpath.strip("/")
@@ -211,10 +206,14 @@ async def onlyoffice_open(
     doc_type = _EXT_TO_DOCTYPE.get(ext, "word")
     user_can_edit = can_edit(effective)
     user_can_download = can_upload(effective)
+
+    logger.debug(
+        "onlyoffice_open user_id=%s area=%r subpath=%r is_super_admin=%s rol_id=%s effective=%r can_edit=%s can_download=%s",
+        current_user.id, area, subpath, is_super_admin,
+        user_ext_in_area.rol_id if user_ext_in_area else None,
+        effective, user_can_edit, user_can_download,
+    )
     
-    print(f"  user_can_edit final: {user_can_edit}")
-    print(f"  user_can_download final: {user_can_download}")
-    print("------------------------------------------\n")
 
     # ── Modo Desktop ─────────────────────────────────────────────────────────
     if ONLYOFFICE_MODE == "desktop":

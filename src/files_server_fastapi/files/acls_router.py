@@ -1,5 +1,6 @@
 import os
 import asyncio
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,31 @@ from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.users_extend_model import Users_extend
 from files_server_fastapi.models.rol_model import Rol
+
+logger = logging.getLogger(__name__)
+
+_ADMIN_ROLES = frozenset({"SUPER_ADMIN", "AREA_ADMIN"})
+
+
+async def _require_admin_role(current_user: User, db: AsyncSession) -> None:
+    """
+    Lanza HTTP 403 si el usuario autenticado no tiene rol SUPER_ADMIN ni AREA_ADMIN.
+    """
+    ext_result = await db.execute(
+        select(Users_extend).where(Users_extend.user_id == current_user.id)
+    )
+    user_exts = ext_result.scalars().all()
+
+    for ext in user_exts:
+        rol_res = await db.execute(select(Rol).where(Rol.id == ext.rol_id))
+        rol = rol_res.scalars().first()
+        if rol and rol.role_name.upper() in _ADMIN_ROLES:
+            return  # Acceso concedido
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Se requiere rol SUPER_ADMIN o AREA_ADMIN para esta operacion.",
+    )
 
 router = APIRouter()
 
@@ -87,7 +113,7 @@ async def create_acl(
     processed_acls = []
 
     for acl_item in req.acls:
-        print(f"[acls_router] INPUT  → area={req.area!r}  path={acl_item.path!r}  permission={acl_item.permission!r}")
+        logger.debug("acls_router INPUT area=%r path=%r permission=%r", req.area, acl_item.path, acl_item.permission)
 
         # Las rutas en DB se almacenan SIN barra inicial (ej: "VENTAS/test1/sub")
         # Normalizar siempre usando path_utils para eliminar prefijos de área duplicados
@@ -107,14 +133,14 @@ async def create_acl(
         ruta_obj = ruta_result.scalars().first()
 
         if ruta_obj:
-            print(f"[acls_router] FOUND  → ruta canónica en DB: {logical_path_full!r} (area_id={ruta_obj.area_id})")
+            logger.debug("acls_router FOUND ruta canonica en DB: %r (area_id=%s)", logical_path_full, ruta_obj.area_id)
         else:
             # PASO 2 — Intentar también con barra inicial por compatibilidad con registros antiguos
             ruta_slash_result = await db.execute(select(Rutas).where(Rutas.ruta == "/" + logical_path_full))
             ruta_obj = ruta_slash_result.scalars().first()
 
             if ruta_obj:
-                print(f"[acls_router] FOUND  → ruta con slash en DB: /{logical_path_full!r} (area_id={ruta_obj.area_id})")
+                logger.debug("acls_router FOUND ruta con slash en DB: /%r (area_id=%s)", logical_path_full, ruta_obj.area_id)
             else:
                 # PASO 3 — Realmente no existe: buscar el área correcta para la nueva ruta
                 # Si la ruta es cross-área (ej: INGENIERIA/...) buscar el área correcta
@@ -127,7 +153,7 @@ async def create_acl(
                     if cross_area:
                         area_for_ruta = cross_area
 
-                print(f"[acls_router] BUILD  → no encontrada, construyendo: {logical_path_full!r}")
+                logger.debug("acls_router BUILD no encontrada, construyendo: %r", logical_path_full)
                 ruta_obj = Rutas(
                     ruta=logical_path_full,
                     name=folder_name,
@@ -231,15 +257,19 @@ async def get_user_acls(
 @router.get("/acls/user/{user_id}", summary="Obtener los ACLs de un usuario específico")
 async def get_specific_user_acls(
     user_id: int,
-    db: AsyncSession = Depends(get_db_session)
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Devuelve las reglas actuales de un usuario en un formato enriquecido para el modal de React.
-    Formato: { "/VENTAS/test1": { "permission": "Vista, Edición y Subida", "ruta_id": 42 } }
+    Formato: { "/VENTAS/test1": { "permission": "Vista, Edicion y Subida", "ruta_id": 42 } }
 
-    Acepta el auth user_id directamente (el mismo que está en user_ruta_access.user_id).
-    Por compatibilidad también acepta users_extend.id si el user_id no se encuentra como auth user_id.
+    Acepta el auth user_id directamente (el mismo que esta en user_ruta_access.user_id).
+    Por compatibilidad tambien acepta users_extend.id si el user_id no se encuentra como auth user_id.
+
+    **Requiere rol SUPER_ADMIN o AREA_ADMIN.**
     """
+    await _require_admin_role(current_user, db)
     ext_result = await db.execute(
         select(Users_extend).where(Users_extend.user_id == user_id)
     )
