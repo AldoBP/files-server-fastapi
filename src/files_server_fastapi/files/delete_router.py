@@ -3,7 +3,7 @@ import shutil
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete as sql_delete
+from sqlalchemy import select, delete as sql_delete, or_
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import get_current_verified_user, User
@@ -17,7 +17,7 @@ router = APIRouter()
 class DeleteRequest(BaseModel):
     area: str
     subpath: str = "/"
-    name: str  # nombre del archivo o carpeta a eliminar
+    filename: str  # nombre del archivo o carpeta a eliminar
 
 
 @router.delete("/delete", summary="Eliminar un archivo o carpeta del servidor")
@@ -35,8 +35,8 @@ async def delete_item(
     - La base de datos se limpia **solo si** la eliminación física tuvo éxito, evitando registros huérfanos.
     """
     # ── 1. Validar rutas ANTES de cualquier lógica de negocio ─────────────────
-    # req.name nunca debe contener separadores de directorio ni secuencias de traversal.
-    if ".." in req.subpath or ".." in req.name or "/" in req.name:
+    # req.filename nunca debe contener separadores de directorio ni secuencias de traversal.
+    if ".." in req.subpath or ".." in req.filename or "/" in req.filename:
         raise HTTPException(status_code=400, detail="Ruta o nombre inválido")
 
     # ── 2. Verificar permiso de eliminación ───────────────────────────────────
@@ -49,7 +49,7 @@ async def delete_item(
     )
 
     # ── 3. Construir rutas ────────────────────────────────────────────────────
-    safe_name = os.path.basename(req.name)
+    safe_name = os.path.basename(req.filename)
     safe_subpath = req.subpath.strip("/")
     ruta_real = (
         os.path.join(BASE_DIR, req.area.upper(), safe_subpath, safe_name)
@@ -85,7 +85,12 @@ async def delete_item(
     # Para archivos regulares no suele haber entrada en Rutas, pero el DELETE
     # es seguro (no borra nada si no hay coincidencia).
     await db.execute(
-        sql_delete(Rutas).where(Rutas.ruta.like(f"{logical_prefix}%"))
+        sql_delete(Rutas).where(
+            or_(
+                Rutas.ruta == logical_prefix,
+                Rutas.ruta.like(f"{logical_prefix}/%")
+            )
+        )
     )
     await db.commit()
 

@@ -267,9 +267,10 @@ async def get_specific_user_acls(
     Acepta el auth user_id directamente (el mismo que esta en user_ruta_access.user_id).
     Por compatibilidad tambien acepta users_extend.id si el user_id no se encuentra como auth user_id.
 
-    **Requiere rol SUPER_ADMIN o AREA_ADMIN.**
+    **Requiere rol SUPER_ADMIN o AREA_ADMIN (excepto si el usuario consulta sus propios permisos).**
     """
-    await _require_admin_role(current_user, db)
+    if current_user.id != user_id:
+        await _require_admin_role(current_user, db)
     ext_result = await db.execute(
         select(Users_extend).where(Users_extend.user_id == user_id)
     )
