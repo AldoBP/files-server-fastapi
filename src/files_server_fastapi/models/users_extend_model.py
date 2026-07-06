@@ -1,5 +1,7 @@
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
+from sqlalchemy import Column
+from sqlalchemy import DateTime as SADateTime
 from sqlmodel import Field
 from oauth2fast_fastapi import AuthModel
 
@@ -24,7 +26,10 @@ class Users_extend(AuthModel, table=True):
     # ── Soft Delete ───────────────────────────────────────────────────────────
     # NULL  → usuario activo
     # NOT NULL → usuario dado de baja (fecha/hora exacta de la baja)
-    deleted_at: Optional[datetime] = Field(default=None)
+    deleted_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(SADateTime(timezone=True), nullable=True)
+    )
 
     # ID del usuario (admin/sistemas) que ejecutó la baja. NULL si está activo.
     deleted_by: Optional[int] = Field(default=None, foreign_key="users.id")

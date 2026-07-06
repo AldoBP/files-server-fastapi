@@ -84,7 +84,7 @@ async def _validate_area_and_rol(area_id: Optional[int], rol_id: Optional[int], 
 # POST /users-extend/ — Vincular usuario
 # ==========================================
 @router.post("/", response_model=Users_extend, status_code=status.HTTP_201_CREATED, summary="Vincular Usuario con Área y Rol")
-async def create_user_extend(user_ext: UserExtendCreate, db: AsyncSession = Depends(get_db_session)):
+async def create_user_extend(user_ext: UserExtendCreate, auth: tuple = Depends(require_superadmin), db: AsyncSession = Depends(get_db_session)):
     """
     Vincula un usuario con un área y rol. Valida que el área y rol existan antes de insertar.
     """
@@ -110,7 +110,7 @@ async def create_user_extend(user_ext: UserExtendCreate, db: AsyncSession = Depe
 # GET /users-extend/ — Listar todos
 # ==========================================
 @router.get("/", response_model=list[UserExtendResponse], summary="Ver vínculos de usuarios")
-async def get_users_extend(db: AsyncSession = Depends(get_db_session)):
+async def get_users_extend(auth=Depends(get_active_user), db: AsyncSession = Depends(get_db_session)):
     result = await db.execute(select(Users_extend))
     users = result.scalars().all()
     # Construimos la respuesta manual inyectando role_id
@@ -126,7 +126,7 @@ async def get_users_extend(db: AsyncSession = Depends(get_db_session)):
 # GET /users-extend/by-area/{area_id}
 # ==========================================
 @router.get("/by-area/{area_id}", response_model=list[UserExtendResponse], summary="Obtener usuarios de un área")
-async def get_users_by_area(area_id: int, db: AsyncSession = Depends(get_db_session)):
+async def get_users_by_area(area_id: int, auth=Depends(get_active_user), db: AsyncSession = Depends(get_db_session)):
     result = await db.execute(select(Users_extend).where(Users_extend.area_id == area_id))
     users = result.scalars().all()
     response = []
@@ -141,7 +141,7 @@ async def get_users_by_area(area_id: int, db: AsyncSession = Depends(get_db_sess
 # GET /users-extend/by-user/{user_id}
 # ==========================================
 @router.get("/by-user/{user_id}", summary="Obtener Área y Rol de un Usuario específico")
-async def get_user_permissions(user_id: int, db: AsyncSession = Depends(get_db_session)):
+async def get_user_permissions(user_id: int, auth=Depends(get_active_user), db: AsyncSession = Depends(get_db_session)):
     result = await db.execute(select(Users_extend).where(Users_extend.user_id == user_id))
     user_ext = result.scalars().first()
 
@@ -155,7 +155,7 @@ async def get_user_permissions(user_id: int, db: AsyncSession = Depends(get_db_s
 # PATCH /users-extend/{user_id} — Actualizar
 # ==========================================
 @router.patch("/{user_id}", response_model=UserExtendResponse, summary="Actualizar datos de extensión de usuario")
-async def update_user_extend(user_id: int, user_ext_update: UserExtendUpdate, db: AsyncSession = Depends(get_db_session)):
+async def update_user_extend(user_id: int, user_ext_update: UserExtendUpdate, auth: tuple = Depends(require_superadmin), db: AsyncSession = Depends(get_db_session)):
     from sqlmodel import or_
     
     # Buscamos por user_id (lo ideal) o por el ID interno del registro (si el frontend se confunde)
@@ -329,16 +329,16 @@ async def deactivate_user(
 @router.post(
     "/{user_id}/reactivate",
     status_code=status.HTTP_200_OK,
-    summary="Reactivar un usuario dado de baja (solo Sistemas/Superadmin)",
+    summary="Reactivar un usuario dado de baja",
 )
 async def reactivate_user(
     user_id: int,
-    auth: tuple = Depends(require_superadmin),
+    auth: tuple = Depends(require_area_admin_or_superadmin),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
     Reactiva a un usuario previamente dado de baja.
-    Solo Sistemas/Superadmin puede ejecutar esta acción.
+    Admin de Área solo puede reactivar usuarios de su área. Superadmin a todos.
 
     El trigger PostgreSQL automáticamente restaura is_verified = TRUE
     en la tabla users, permitiendo que el usuario vuelva a hacer login.
@@ -353,6 +353,28 @@ async def reactivate_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Usuario con ID {user_id} no encontrado.",
         )
+
+    current_user, executor_ext, is_superadmin = auth
+
+    if not is_superadmin:
+        # Admin de área: solo puede reactivar a usuarios de su misma área
+        if target_ext.area_id != executor_ext.area_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo puedes reactivar a usuarios de tu propia área.",
+            )
+
+        # Admin de área: no puede reactivar a otros admins de área ni superadmins
+        from files_server_fastapi.dependencies.user_dependencies import (
+            _get_privilege_level,
+            PRIVILEGE_AREA_ADMIN,
+        )
+        target_level = await _get_privilege_level(target_ext.rol_id, db)
+        if target_level >= PRIVILEGE_AREA_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No puedes reactivar a un Admin de Área o Superadmin. Contacta a Sistemas.",
+            )
 
     if target_ext.deleted_at is None:
         raise HTTPException(
@@ -377,19 +399,24 @@ async def reactivate_user(
 @router.get(
     "/inactive",
     status_code=status.HTTP_200_OK,
-    summary="Listar usuarios dados de baja (Auditoría — solo Sistemas/Superadmin)",
+    summary="Listar usuarios dados de baja",
 )
 async def list_inactive_users(
-    auth: tuple = Depends(require_superadmin),
+    auth: tuple = Depends(require_area_admin_or_superadmin),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Retorna todos los usuarios dados de baja con su fecha y responsable de baja.
-    Solo accesible por Sistemas/Superadmin. Útil para auditoría y trazabilidad.
+    Retorna los usuarios dados de baja.
+    Admin de Área solo ve los de su área. Superadmin ve todos. Útil para auditoría.
     """
-    result = await db.execute(
-        select(Users_extend).where(Users_extend.deleted_at.is_not(None))
-    )
+    current_user, executor_ext, is_superadmin = auth
+
+    query = select(Users_extend).where(Users_extend.deleted_at.is_not(None))
+    
+    if not is_superadmin:
+        query = query.where(Users_extend.area_id == executor_ext.area_id)
+
+    result = await db.execute(query)
     inactive_users = result.scalars().all()
 
     return [

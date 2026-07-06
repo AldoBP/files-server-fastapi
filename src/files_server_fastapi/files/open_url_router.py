@@ -12,7 +12,8 @@ from files_server_fastapi.files.dependencies import (
     can_edit,
     can_upload,
 )
-from oauth2fast_fastapi import get_current_verified_user, User
+from oauth2fast_fastapi import User
+from files_server_fastapi.dependencies.user_dependencies import get_active_user
 
 router = APIRouter()
 
@@ -27,7 +28,7 @@ async def get_open_url(
     filename: str,
     subpath: str = "/",
     access_type: str = Depends(check_folder_access),
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
 ):
     """
     Devuelve un array **`options`** con las maneras de abrir el archivo según el permiso del usuario.

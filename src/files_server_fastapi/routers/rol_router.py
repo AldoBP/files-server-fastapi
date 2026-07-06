@@ -4,7 +4,8 @@ from sqlalchemy import select
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from files_server_fastapi.models.rol_model import Rol
-from files_server_fastapi.dependencies.user_dependencies import require_superadmin
+from files_server_fastapi.models.rol_model import Rol
+from files_server_fastapi.dependencies.user_dependencies import get_active_user, require_superadmin
 
 router = APIRouter(prefix="/roles", tags=["Gestión de Roles"])
 
@@ -30,11 +31,11 @@ async def create_rol(
 
 @router.get("/", response_model=list[Rol], summary="Obtener todos los Roles")
 async def get_roles(
+    auth=Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Obtiene la lista de todos los roles.
-    Público para lectura (necesario para formularios de registro/edición).
     """
     result = await db.execute(select(Rol))
     return result.scalars().all()

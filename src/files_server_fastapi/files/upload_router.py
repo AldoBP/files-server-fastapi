@@ -2,7 +2,8 @@ import os
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
-from oauth2fast_fastapi import get_current_verified_user, User
+from oauth2fast_fastapi import User
+from files_server_fastapi.dependencies.user_dependencies import get_active_user
 from files_server_fastapi.files.constants import BASE_DIR
 from files_server_fastapi.files.dependencies import check_folder_access
 
@@ -14,7 +15,7 @@ async def upload_file(
     area: str = Form(...),
     subpath: str = Form(default="/"),
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """

@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, or_
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
-from oauth2fast_fastapi import get_current_verified_user, User
+from oauth2fast_fastapi import User
+from files_server_fastapi.dependencies.user_dependencies import get_active_user
 from files_server_fastapi.files.path_utils import normalize_subpath, build_logical_path
 from files_server_fastapi.models.permisos_model import User_Ruta_Access, Permisos
 from files_server_fastapi.models.rutas_model import Rutas
@@ -90,7 +91,7 @@ class AclCreate(BaseModel):
 @router.post("/acls", summary="Asignar acceso a una carpeta específica (ACL)")
 async def create_acl(
     req: AclCreate,
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -212,7 +213,7 @@ async def create_acl(
 
 @router.get("/acls", summary="Obtener las carpetas compartidas del usuario")
 async def get_user_acls(
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -257,7 +258,7 @@ async def get_user_acls(
 @router.get("/acls/user/{user_id}", summary="Obtener los ACLs de un usuario específico")
 async def get_specific_user_acls(
     user_id: int,
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -321,7 +322,7 @@ async def get_specific_user_acls(
 async def initialize_user_acl(
     user_id: int,
     grant_full_area: bool = False,
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -403,7 +404,7 @@ async def initialize_user_acl(
 )
 async def grant_full_area(
     user_id: int,
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -426,7 +427,7 @@ async def grant_full_area(
 )
 async def revoke_full_area(
     user_id: int,
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -487,7 +488,7 @@ async def revoke_full_area(
 async def delete_user_acl(
     user_id: int,
     ruta_id: int,
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """

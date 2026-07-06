@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from files_server_fastapi.models.area_model import Area
+from files_server_fastapi.dependencies.user_dependencies import get_active_user, require_superadmin
 
 router = APIRouter(prefix="/areas", tags=["Gestión de Áreas"])
 
@@ -24,7 +25,7 @@ class AreaUpdate(BaseModel):
 # POST /areas/ — Crear nueva área
 # ==========================================
 @router.post("/", response_model=Area, status_code=status.HTTP_201_CREATED, summary="Crear una nueva Área")
-async def create_area(area_data: AreaCreate, db: AsyncSession = Depends(get_db_session)):
+async def create_area(area_data: AreaCreate, auth: tuple = Depends(require_superadmin), db: AsyncSession = Depends(get_db_session)):
     """
     Crea y guarda una nueva área en la base de datos.
     Solo accesible por superusuarios desde el panel de administración.
@@ -49,7 +50,7 @@ async def create_area(area_data: AreaCreate, db: AsyncSession = Depends(get_db_s
 # GET /areas/ — Listar todas las áreas
 # ==========================================
 @router.get("/", response_model=list[Area], summary="Obtener todas las Áreas")
-async def get_areas(db: AsyncSession = Depends(get_db_session)):
+async def get_areas(auth=Depends(get_active_user), db: AsyncSession = Depends(get_db_session)):
     """
     Devuelve la lista de todas las áreas registradas.
     """
@@ -61,7 +62,7 @@ async def get_areas(db: AsyncSession = Depends(get_db_session)):
 # GET /areas/{area_id} — Obtener área por ID
 # ==========================================
 @router.get("/{area_id}", response_model=Area, summary="Obtener un Área por ID")
-async def get_area(area_id: int, db: AsyncSession = Depends(get_db_session)):
+async def get_area(area_id: int, auth=Depends(get_active_user), db: AsyncSession = Depends(get_db_session)):
     """
     Devuelve los datos de un área específica por su ID.
     """
@@ -79,7 +80,7 @@ async def get_area(area_id: int, db: AsyncSession = Depends(get_db_session)):
 # PATCH /areas/{area_id} — Actualizar área
 # ==========================================
 @router.patch("/{area_id}", response_model=Area, summary="Actualizar un Área")
-async def update_area(area_id: int, area_update: AreaUpdate, db: AsyncSession = Depends(get_db_session)):
+async def update_area(area_id: int, area_update: AreaUpdate, auth: tuple = Depends(require_superadmin), db: AsyncSession = Depends(get_db_session)):
     """
     Actualiza parcialmente los datos de un área existente.
     """
@@ -114,7 +115,7 @@ async def update_area(area_id: int, area_update: AreaUpdate, db: AsyncSession = 
 # DELETE /areas/{area_id} — Eliminar área
 # ==========================================
 @router.delete("/{area_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un Área")
-async def delete_area(area_id: int, db: AsyncSession = Depends(get_db_session)):
+async def delete_area(area_id: int, auth: tuple = Depends(require_superadmin), db: AsyncSession = Depends(get_db_session)):
     """
     Elimina un área por su ID.
     ADVERTENCIA: Solo eliminar si no hay usuarios asociados a esta área.

@@ -12,7 +12,8 @@ from sqlalchemy import select, or_
 from sqlmodel import select as sm_select
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
-from oauth2fast_fastapi import get_current_verified_user, User
+from oauth2fast_fastapi import User
+from files_server_fastapi.dependencies.user_dependencies import get_active_user
 
 from files_server_fastapi.files.constants import BASE_DIR
 from files_server_fastapi.files.dependencies import (
@@ -163,7 +164,7 @@ async def search_files(
     q: str = Query(..., min_length=1, description="Texto a buscar (nombre de archivo o carpeta)"),
     area: str = Query(None, description="Área donde buscar (ej: Ventas). Si se omite, busca en todas las áreas accesibles."),
     limit: int = Query(50, ge=1, le=200, description="Número máximo de resultados"),
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -283,7 +284,7 @@ async def search_users(
     q: str = Query(..., min_length=1, description="Nombre o email del usuario a buscar"),
     area: str = Query(None, description="Filtrar por área (ej: Ventas). Si se omite, busca en todas las áreas (solo SUPER_ADMIN)."),
     limit: int = Query(20, ge=1, le=100, description="Número máximo de resultados"),
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """

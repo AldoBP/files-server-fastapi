@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
-from oauth2fast_fastapi import get_current_verified_user, User
+from oauth2fast_fastapi import User
+from files_server_fastapi.dependencies.user_dependencies import get_active_user
 from files_server_fastapi.files.constants import BASE_DIR
 from files_server_fastapi.files.dependencies import check_folder_access
 from files_server_fastapi.files.path_utils import normalize_subpath, build_logical_path
@@ -27,7 +28,7 @@ class FolderCreate(BaseModel):
 @router.post("/folder", summary="Crear una nueva carpeta en el servidor")
 async def create_folder(
     req: FolderCreate,
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     logger.debug("folder_router INPUT area=%r subpath=%r folder_name=%r", req.area, req.subpath, req.folder_name)
