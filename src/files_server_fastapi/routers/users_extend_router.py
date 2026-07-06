@@ -1,16 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from datetime import datetime, timezone
 from typing import Optional
-from pydantic import BaseModel
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from oauth2fast_fastapi import User
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
-from files_server_fastapi.models.users_extend_model import Users_extend
+
+from files_server_fastapi.dependencies.user_dependencies import (
+    get_active_user,
+    require_area_admin_or_superadmin,
+    require_superadmin,
+)
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.rol_model import Rol
-
-
-from pydantic import BaseModel, Field, model_validator
+from files_server_fastapi.models.users_extend_model import Users_extend
 
 class UserExtendCreate(BaseModel):
     user_id: int
@@ -32,9 +38,11 @@ class UserExtendResponse(BaseModel):
     user_id: int
     area_id: int
     rol_id: int
-    role_id: int  # Añadimos alias virtual para el frontend
+    role_id: int  # Alias virtual para el frontend
     puesto: Optional[str] = None
-    
+    deleted_at: Optional[datetime] = None
+    deleted_by: Optional[int] = None
+
     class Config:
         from_attributes = True
 
@@ -206,12 +214,13 @@ async def update_user_extend(user_id: int, user_ext_update: UserExtendUpdate, db
 
 
 # ==========================================
-# DELETE /users-extend/{user_id} — Eliminar
+# DELETE /users-extend/{user_id} — Eliminar (Hard Delete - solo estructura)
 # ==========================================
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar extensión de usuario")
 async def delete_user_extend(user_id: int, db: AsyncSession = Depends(get_db_session)):
     """
     Elimina el vínculo de área y rol de un usuario.
+    NOTA: Para dar de baja a un usuario sin eliminar sus datos, usa DELETE /{user_id}/deactivate.
     """
     result = await db.execute(select(Users_extend).where(Users_extend.user_id == user_id))
     user_ext = result.scalars().first()
@@ -224,3 +233,174 @@ async def delete_user_extend(user_id: int, db: AsyncSession = Depends(get_db_ses
 
     await db.delete(user_ext)
     await db.commit()
+
+
+# ==========================================
+# DELETE /users-extend/{user_id}/deactivate — Soft Delete (Baja Lógica)
+# ==========================================
+@router.delete(
+    "/{user_id}/deactivate",
+    status_code=status.HTTP_200_OK,
+    summary="Dar de baja a un usuario (Borrado Lógico)",
+)
+async def deactivate_user(
+    user_id: int,
+    auth: tuple = Depends(require_area_admin_or_superadmin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Da de baja lógica a un usuario. El usuario no podrá hacer login ni usar
+    ningún endpoint del sistema. Sus datos se conservan para auditoría.
+
+    Reglas de autorización:
+    - Superadmin/Sistemas: puede dar de baja a cualquier usuario.
+    - Admin de Área: solo puede dar de baja a usuarios de su misma área,
+      y no puede dar de baja a otros admins de área.
+
+    El trigger PostgreSQL automáticamente:
+    - Pone is_verified = FALSE en la tabla users (bloquea el login).
+    - Pone samba_enabled = FALSE en users_extend.
+    """
+    current_user, executor_ext, is_superadmin = auth
+
+    # Buscar al usuario objetivo
+    result = await db.execute(
+        select(Users_extend).where(Users_extend.user_id == user_id)
+    )
+    target_ext = result.scalars().first()
+
+    if not target_ext:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Usuario con ID {user_id} no encontrado.",
+        )
+
+    # No puede darse de baja a sí mismo
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes darte de baja a ti mismo.",
+        )
+
+    # Verificar si ya está dado de baja
+    if target_ext.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"El usuario con ID {user_id} ya está dado de baja.",
+        )
+
+    if not is_superadmin:
+        # Admin de área: solo puede dar de baja a usuarios de su misma área
+        if target_ext.area_id != executor_ext.area_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo puedes dar de baja a usuarios de tu propia área.",
+            )
+
+        # Admin de área: no puede dar de baja a otros admins de área ni superadmins
+        from files_server_fastapi.dependencies.user_dependencies import (
+            _get_privilege_level,
+            PRIVILEGE_AREA_ADMIN,
+        )
+        target_level = await _get_privilege_level(target_ext.rol_id, db)
+        if target_level >= PRIVILEGE_AREA_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No puedes dar de baja a un Admin de Área o Superadmin. Contacta a Sistemas.",
+            )
+
+    # Ejecutar el soft delete
+    target_ext.deleted_at = datetime.now(timezone.utc)
+    target_ext.deleted_by = current_user.id
+    db.add(target_ext)
+    await db.commit()
+    await db.refresh(target_ext)
+
+    return {
+        "message": f"Usuario con ID {user_id} dado de baja correctamente.",
+        "deleted_at": target_ext.deleted_at.isoformat(),
+        "deleted_by": current_user.id,
+    }
+
+
+# ==========================================
+# POST /users-extend/{user_id}/reactivate — Reactivar usuario
+# ==========================================
+@router.post(
+    "/{user_id}/reactivate",
+    status_code=status.HTTP_200_OK,
+    summary="Reactivar un usuario dado de baja (solo Sistemas/Superadmin)",
+)
+async def reactivate_user(
+    user_id: int,
+    auth: tuple = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Reactiva a un usuario previamente dado de baja.
+    Solo Sistemas/Superadmin puede ejecutar esta acción.
+
+    El trigger PostgreSQL automáticamente restaura is_verified = TRUE
+    en la tabla users, permitiendo que el usuario vuelva a hacer login.
+    """
+    result = await db.execute(
+        select(Users_extend).where(Users_extend.user_id == user_id)
+    )
+    target_ext = result.scalars().first()
+
+    if not target_ext:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Usuario con ID {user_id} no encontrado.",
+        )
+
+    if target_ext.deleted_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"El usuario con ID {user_id} no está dado de baja.",
+        )
+
+    target_ext.deleted_at = None
+    target_ext.deleted_by = None
+    db.add(target_ext)
+    await db.commit()
+
+    return {
+        "message": f"Usuario con ID {user_id} reactivado correctamente.",
+        "user_id": user_id,
+    }
+
+
+# ==========================================
+# GET /users-extend/inactive — Listar usuarios dados de baja (Auditoría)
+# ==========================================
+@router.get(
+    "/inactive",
+    status_code=status.HTTP_200_OK,
+    summary="Listar usuarios dados de baja (Auditoría — solo Sistemas/Superadmin)",
+)
+async def list_inactive_users(
+    auth: tuple = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Retorna todos los usuarios dados de baja con su fecha y responsable de baja.
+    Solo accesible por Sistemas/Superadmin. Útil para auditoría y trazabilidad.
+    """
+    result = await db.execute(
+        select(Users_extend).where(Users_extend.deleted_at.is_not(None))
+    )
+    inactive_users = result.scalars().all()
+
+    return [
+        {
+            "id": u.id,
+            "user_id": u.user_id,
+            "area_id": u.area_id,
+            "rol_id": u.rol_id,
+            "puesto": u.puesto,
+            "deleted_at": u.deleted_at.isoformat() if u.deleted_at else None,
+            "deleted_by": u.deleted_by,
+        }
+        for u in inactive_users
+    ]

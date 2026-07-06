@@ -30,7 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
-from oauth2fast_fastapi import get_current_verified_user, User
+from oauth2fast_fastapi import User
+from files_server_fastapi.dependencies.user_dependencies import get_active_user
 from files_server_fastapi.models.users_extend_model import Users_extend
 from files_server_fastapi.models.permisos_model import User_Ruta_Access
 from files_server_fastapi.models.rutas_model import Rutas
@@ -170,7 +171,7 @@ class SambaActivateRequest(BaseModel):
 async def activate_samba(
     user_ext_id: int,
     req: SambaActivateRequest = SambaActivateRequest(),
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -225,7 +226,7 @@ async def activate_samba(
 )
 async def deactivate_samba(
     user_ext_id: int,
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -275,7 +276,7 @@ async def deactivate_samba(
 )
 async def get_samba_status(
     user_ext_id: int,
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -320,7 +321,7 @@ async def get_samba_status(
 )
 async def sync_samba(
     user_ext_id: int,
-    current_user: User = Depends(get_current_verified_user),
+    current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
