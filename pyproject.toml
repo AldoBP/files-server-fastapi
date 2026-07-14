@@ -20,6 +20,7 @@ dependencies = [
     "python-dotenv",
     "wsgidav>=4.3",
     "psycopg2-binary>=2.9",
+    "cryptography>=46.0.5",
 ]
 
 [dependency-groups]

@@ -31,12 +31,16 @@ from sqlalchemy import select
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import User
-from files_server_fastapi.dependencies.user_dependencies import get_active_user
+from files_server_fastapi.dependencies.user_dependencies import (
+    get_active_user,
+    require_superadmin,
+)
 from files_server_fastapi.models.users_extend_model import Users_extend
 from files_server_fastapi.models.permisos_model import User_Ruta_Access
 from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.rol_model import Rol
+from files_server_fastapi.security.samba_crypto import encrypt_password, decrypt_password
 
 router = APIRouter(prefix="/samba", tags=["Gestión Samba"])
 
@@ -198,9 +202,9 @@ async def activate_samba(
             detail=f"Error al configurar usuario en Samba: {error_msg}",
         )
 
-    # Actualizar users_extend
+    # Actualizar users_extend — contraseña cifrada con Fernet antes de guardar
     user_ext.samba_enabled = True
-    user_ext.samba_password = password
+    user_ext.samba_password = encrypt_password(password)
     db.add(user_ext)
     await db.commit()
 
@@ -212,10 +216,9 @@ async def activate_samba(
         "user_id": user_ext.user_id,
         "username": linux_username,
         "samba_enabled": True,
-        "password": password,
         "message": (
             f"Acceso Samba activado para '{linux_username}'. "
-            "Comunica las credenciales al usuario."
+            "Usa el endpoint /reveal-password (solo SUPER_ADMIN) para consultar las credenciales."
         ),
     }
 
@@ -349,4 +352,52 @@ async def sync_samba(
         "user_ext_id": user_ext_id,
         "username": linux_username,
         "message": "Re-sincronización de permisos Samba iniciada en background.",
+    }
+
+
+@router.get(
+    "/users/{user_ext_id}/reveal-password",
+    summary="Revelar contraseña Samba de un usuario (solo SUPER_ADMIN)",
+)
+async def reveal_samba_password(
+    user_ext_id: int,
+    auth: tuple = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Descifra y devuelve la contraseña Samba actual del usuario indicado.
+
+    Útil cuando el admin necesita comunicarle las credenciales al usuario
+    o verificar qué contraseña está configurada.
+
+    **Solo accesible por SUPER_ADMIN (Sistemas).**
+    """
+    user_ext, linux_username = await _get_user_ext_and_username(user_ext_id, db)
+
+    if not user_ext.samba_password:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"El usuario '{linux_username}' no tiene contraseña Samba asignada. "
+                "Activa Samba primero con /activate."
+            ),
+        )
+
+    try:
+        plain_password = decrypt_password(user_ext.samba_password)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+    return {
+        "user_ext_id": user_ext_id,
+        "user_id": user_ext.user_id,
+        "username": linux_username,
+        "password": plain_password,
+        "message": (
+            "Contraseña obtenida correctamente. "
+            "Comunícala al usuario de forma segura (no por correo ni chat)."
+        ),
     }

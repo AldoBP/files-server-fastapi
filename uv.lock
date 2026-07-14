@@ -640,6 +640,7 @@ name = "files-server-fastapi"
 version = "0.1.46"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "oauth2fast-fastapi" },
     { name = "psycopg2-binary" },
     { name = "python-dotenv" },
@@ -658,6 +659,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=46.0.5" },
     { name = "oauth2fast-fastapi", specifier = "==0.4.4" },
     { name = "psycopg2-binary", specifier = ">=2.9" },
     { name = "python-dotenv" },
