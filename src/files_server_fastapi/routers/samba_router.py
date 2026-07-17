@@ -40,7 +40,6 @@ from files_server_fastapi.models.permisos_model import User_Ruta_Access
 from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.rol_model import Rol
-from files_server_fastapi.security.samba_crypto import encrypt_password, decrypt_password
 
 router = APIRouter(prefix="/samba", tags=["Gestión Samba"])
 
@@ -153,7 +152,8 @@ async def _get_user_ext_and_username(
             detail=f"No se encontró el usuario base con ID {user_ext.user_id}.",
         )
 
-    return user_ext, user_obj.username
+    linux_username = user_obj.email.replace("@", "_").replace(".", "_").lower()
+    return user_ext, linux_username
 
 
 # ── Modelos de Request/Response ───────────────────────────────────────────────
@@ -202,9 +202,8 @@ async def activate_samba(
             detail=f"Error al configurar usuario en Samba: {error_msg}",
         )
 
-    # Actualizar users_extend — contraseña cifrada con Fernet antes de guardar
+    # Actualizar users_extend — ahora solo guarda el flag, no la contraseña
     user_ext.samba_enabled = True
-    user_ext.samba_password = encrypt_password(password)
     db.add(user_ext)
     await db.commit()
 
@@ -216,10 +215,8 @@ async def activate_samba(
         "user_id": user_ext.user_id,
         "username": linux_username,
         "samba_enabled": True,
-        "message": (
-            f"Acceso Samba activado para '{linux_username}'. "
-            "Usa el endpoint /reveal-password (solo SUPER_ADMIN) para consultar las credenciales."
-        ),
+        "password": password,
+        "warning": "Guarda esta contraseña ahora. No se volverá a mostrar nunca más."
     }
 
 
@@ -311,7 +308,6 @@ async def get_samba_status(
         "user_id": user_ext.user_id,
         "username": linux_username,
         "samba_enabled": user_ext.samba_enabled,
-        "has_password": user_ext.samba_password is not None,
         "acl_count": acl_count,
         "rol": rol.role_name if rol else None,
         "area": area_obj.area_name if area_obj else None,
@@ -355,49 +351,50 @@ async def sync_samba(
     }
 
 
-@router.get(
-    "/users/{user_ext_id}/reveal-password",
-    summary="Revelar contraseña Samba de un usuario (solo SUPER_ADMIN)",
+@router.post(
+    "/users/{user_ext_id}/reset-password",
+    summary="Resetear contraseña Samba de un usuario",
 )
-async def reveal_samba_password(
+async def reset_samba_password(
     user_ext_id: int,
     auth: tuple = Depends(require_superadmin),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Descifra y devuelve la contraseña Samba actual del usuario indicado.
-
-    Útil cuando el admin necesita comunicarle las credenciales al usuario
-    o verificar qué contraseña está configurada.
+    Genera una nueva contraseña aleatoria, la asigna en Samba,
+    y la devuelve en la respuesta.
 
     **Solo accesible por SUPER_ADMIN (Sistemas).**
     """
     user_ext, linux_username = await _get_user_ext_and_username(user_ext_id, db)
 
-    if not user_ext.samba_password:
+    if not user_ext.samba_enabled:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"El usuario '{linux_username}' no tiene contraseña Samba asignada. "
+                f"El usuario '{linux_username}' no tiene Samba activo. "
                 "Activa Samba primero con /activate."
             ),
         )
 
-    try:
-        plain_password = decrypt_password(user_ext.samba_password)
-    except ValueError as e:
+    # Generar nueva contraseña aleatoria
+    password = _generate_samba_password()
+
+    # Actualizar el usuario en Samba
+    success, error_msg = await _set_samba_user_password(linux_username, password)
+    if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail=f"Error al cambiar la contraseña en Samba: {error_msg}",
         )
 
     return {
         "user_ext_id": user_ext_id,
         "user_id": user_ext.user_id,
         "username": linux_username,
-        "password": plain_password,
-        "message": (
-            "Contraseña obtenida correctamente. "
-            "Comunícala al usuario de forma segura (no por correo ni chat)."
+        "password": password,
+        "warning": (
+            "Contraseña actualizada correctamente. "
+            "Comunícala al usuario y guárdala ahora. No se volverá a mostrar nunca más."
         ),
     }
