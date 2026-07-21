@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from oauth2fast_fastapi import User
+from oauth2fast_fastapi.utils.password_utils import hash_password
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 
 from files_server_fastapi.dependencies.user_dependencies import (
@@ -57,6 +58,10 @@ class UserExtendUpdate(BaseModel):
         if 'role_id' in data and 'rol_id' not in data:
             data['rol_id'] = data['role_id']
         return data
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=8, description="Nueva contraseña (mínimo 8 caracteres)")
 
 
 router = APIRouter(prefix="/users-extend", tags=["Extensión de Usuarios"])
@@ -431,3 +436,93 @@ async def list_inactive_users(
         }
         for u in inactive_users
     ]
+
+
+# ==========================================
+# POST /users-extend/{user_id}/reset-password — Reset de contraseña por Admin
+# ==========================================
+@router.post(
+    "/{user_id}/reset-password",
+    status_code=status.HTTP_200_OK,
+    summary="Resetear contraseña de un usuario",
+)
+async def reset_user_password(
+    user_id: int,
+    body: ResetPasswordRequest,
+    auth: tuple = Depends(require_area_admin_or_superadmin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Permite a un Admin de Área o Superadmin cambiar la contraseña de otro usuario.
+
+    Reglas de autorización:
+    - Superadmin/Sistemas: puede resetear la contraseña de cualquier usuario.
+    - Admin de Área: solo puede resetear contraseñas de usuarios de su misma área,
+      y no puede afectar a otros admins de área ni superadmins.
+
+    El usuario no puede usar este endpoint para cambiar su propia contraseña
+    (para eso debería existir un flujo separado de cambio de contraseña).
+    Si olvidó su contraseña, debe acudir con su administrador.
+    """
+    current_user, executor_ext, is_superadmin = auth
+
+    # Buscar la extensión del usuario objetivo
+    result = await db.execute(
+        select(Users_extend).where(Users_extend.user_id == user_id)
+    )
+    target_ext = result.scalars().first()
+
+    if not target_ext:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Usuario con ID {user_id} no encontrado.",
+        )
+
+    # No tiene sentido resetear la contraseña de un usuario dado de baja
+    if target_ext.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"El usuario con ID {user_id} está dado de baja. Reactívalo primero.",
+        )
+
+    if not is_superadmin:
+        # Admin de área: solo puede afectar a usuarios de su misma área
+        if target_ext.area_id != executor_ext.area_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo puedes resetear contraseñas de usuarios de tu propia área.",
+            )
+
+        # Admin de área: no puede resetear contraseñas de otros admins de área ni superadmins
+        from files_server_fastapi.dependencies.user_dependencies import (
+            _get_privilege_level,
+            PRIVILEGE_AREA_ADMIN,
+        )
+        target_level = await _get_privilege_level(target_ext.rol_id, db)
+        if target_level >= PRIVILEGE_AREA_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No puedes resetear la contraseña de un Admin de Área o Superadmin. Contacta a Sistemas.",
+            )
+
+    # Buscar al usuario en la tabla users (modelo del paquete oauth2fast-fastapi)
+    user_result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = user_result.scalars().first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No se encontró el registro de autenticación del usuario con ID {user_id}.",
+        )
+
+    # Hashear y actualizar la contraseña
+    user.password = hash_password(body.new_password)
+    db.add(user)
+    await db.commit()
+
+    return {
+        "message": f"Contraseña del usuario con ID {user_id} actualizada correctamente.",
+        "reset_by": current_user.id,
+    }

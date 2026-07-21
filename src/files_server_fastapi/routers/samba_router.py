@@ -357,12 +357,13 @@ async def sync_samba(
 )
 async def reset_samba_password(
     user_ext_id: int,
+    req: SambaActivateRequest = SambaActivateRequest(),
     auth: tuple = Depends(require_superadmin),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Genera una nueva contraseña aleatoria, la asigna en Samba,
-    y la devuelve en la respuesta.
+    Genera una nueva contraseña aleatoria o usa la proporcionada por el admin,
+    la asigna en Samba, y la devuelve en la respuesta.
 
     **Solo accesible por SUPER_ADMIN (Sistemas).**
     """
@@ -377,8 +378,8 @@ async def reset_samba_password(
             ),
         )
 
-    # Generar nueva contraseña aleatoria
-    password = _generate_samba_password()
+    # Generar nueva contraseña aleatoria o usar la manual
+    password = req.password if req.password else _generate_samba_password()
 
     # Actualizar el usuario en Samba
     success, error_msg = await _set_samba_user_password(linux_username, password)
