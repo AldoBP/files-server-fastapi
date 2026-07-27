@@ -65,11 +65,11 @@ def _generate_samba_password(length: int = 16) -> str:
 
 
 async def _run_samba_sync(script_path: str) -> None:
-    """Ejecuta el script de sincronización Samba en background."""
+    """Ejecuta el script de sincronización Samba en background usando sudo."""
     if not script_path or not os.path.exists(script_path):
         return
     await asyncio.create_subprocess_exec(
-        "python3", script_path,
+        "sudo", "python3", script_path,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -77,12 +77,23 @@ async def _run_samba_sync(script_path: str) -> None:
 
 async def _set_samba_user_password(linux_username: str, password: str) -> tuple[bool, str]:
     """
-    Crea o actualiza la contraseña del usuario en Samba usando smbpasswd.
+    Crea o actualiza la contraseña del usuario en Samba usando sudo smbpasswd.
     Retorna (success, error_message).
     """
     try:
+        # 1. Asegurar que el usuario base de Linux exista antes de agregarlo a Samba
+        useradd_proc = await asyncio.create_subprocess_exec(
+            "sudo", "useradd", "-M", "-s", "/usr/sbin/nologin", linux_username,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await useradd_proc.communicate()
+        # No importa si useradd falla (e.g. código 9 significa que ya existe), 
+        # continuamos con smbpasswd.
+
+        # 2. Agregar o actualizar en Samba
         proc = await asyncio.create_subprocess_exec(
-            "smbpasswd", "-a", "-s", linux_username,
+            "sudo", "smbpasswd", "-a", "-s", linux_username,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
@@ -101,12 +112,12 @@ async def _set_samba_user_password(linux_username: str, password: str) -> tuple[
 
 async def _disable_samba_user(linux_username: str) -> tuple[bool, str]:
     """
-    Deshabilita el usuario en Samba usando smbpasswd -d.
+    Deshabilita el usuario en Samba usando sudo smbpasswd -d.
     Retorna (success, error_message).
     """
     try:
         proc = await asyncio.create_subprocess_exec(
-            "smbpasswd", "-d", linux_username,
+            "sudo", "smbpasswd", "-d", linux_username,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
