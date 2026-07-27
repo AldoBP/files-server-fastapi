@@ -7,6 +7,7 @@ from files_server_fastapi.routers import users_extend_router
 from files_server_fastapi.routers import files_router
 from files_server_fastapi.routers import samba_router
 from files_server_fastapi.routers import favoritos_router
+from files_server_fastapi.routers import notificaciones_router
 
 __all__ = [
     "area_router",
@@ -17,4 +18,5 @@ __all__ = [
     "files_router",
     "samba_router",
     "favoritos_router",
+    "notificaciones_router",
 ]

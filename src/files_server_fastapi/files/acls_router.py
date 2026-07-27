@@ -15,6 +15,7 @@ from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.users_extend_model import Users_extend
 from files_server_fastapi.models.rol_model import Rol
+from files_server_fastapi.notificaciones.service import crear_notificacion
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +209,45 @@ async def create_acl(
             await db.commit()
             await db.refresh(new_acl)
             processed_acls.append(new_acl.id)
+
+    # ── Notificación al usuario destinatario ────────────────────────────────
+    # Se crea una notificación por cada ACL asignado (excepto los INHERIT que
+    # ya hacen `continue` más arriba). El mensaje incluye el email del admin
+    # que otorgó el permiso y el detalle de cada carpeta compartida.
+    if processed_acls:
+        # Construir un resumen legible de las carpetas y permisos asignados
+        carpetas_info = []
+        for acl_item in req.acls:
+            if acl_item.permission != "INHERIT":
+                carpetas_info.append(f"'{acl_item.path}' ({acl_item.permission})")
+
+        if carpetas_info:
+            cantidad = len(carpetas_info)
+            detalle = ", ".join(carpetas_info)
+            titulo = (
+                f"Tienes acceso a {'una carpeta' if cantidad == 1 else f'{cantidad} carpetas'} en {req.area}"
+            )
+            mensaje = (
+                f"{current_user.email} te ha compartido "
+                f"{'la siguiente carpeta' if cantidad == 1 else 'las siguientes carpetas'} "
+                f"en el área {req.area}: {detalle}."
+            )
+            await crear_notificacion(
+                db=db,
+                user_id=req.user_id,
+                tipo="acceso_carpeta",
+                titulo=titulo,
+                mensaje=mensaje,
+                meta={
+                    "area": req.area,
+                    "carpetas": [
+                        {"path": a.path, "permiso": a.permission}
+                        for a in req.acls
+                        if a.permission != "INHERIT"
+                    ],
+                    "otorgado_por": current_user.email,
+                },
+            )
 
     return {"message": "ACLs asignados correctamente", "processed_acls": processed_acls}
 

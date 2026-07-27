@@ -5,6 +5,7 @@ from .rutas_model import Rutas
 from .permisos_model import Permisos, User_Ruta_Access, Permiso_rol
 from .users_extend_model import Users_extend
 from .favoritos_model import UserFavorito
+from .notificaciones_model import Notificacion
 
 __all__ = [
     "Area",
@@ -15,4 +16,5 @@ __all__ = [
     "Permiso_rol",
     "Users_extend",
     "UserFavorito",
+    "Notificacion",
 ]
