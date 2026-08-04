@@ -23,7 +23,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from oauth2fast_fastapi import User
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 
-from files_server_fastapi.dependencies.user_dependencies import get_active_user
+from files_server_fastapi.dependencies.user_dependencies import (
+    get_active_user,
+    get_active_user_stream,
+)
 from files_server_fastapi.models.notificaciones_model import Notificacion
 from files_server_fastapi.notificaciones.service import manager
 
@@ -86,7 +89,7 @@ async def list_notificaciones(
     response_class=StreamingResponse,
 )
 async def stream_notificaciones(
-    current_user: User = Depends(get_active_user),
+    current_user: User = Depends(get_active_user_stream),
     db: AsyncSession = Depends(get_db_session),
 ):
     """

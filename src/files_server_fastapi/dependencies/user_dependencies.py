@@ -27,11 +27,13 @@ Niveles de privilegio (tabla rol.privilege_level):
 
 from datetime import datetime, timezone
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from oauth2fast_fastapi import User, get_current_verified_user
+from oauth2fast_fastapi.dependencies import get_auth_session
+from oauth2fast_fastapi.utils.token_utils import verify_token
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 
 from files_server_fastapi.models.rol_model import Rol
@@ -86,6 +88,50 @@ async def get_active_user(
             ),
         )
     return current_user
+
+
+async def get_active_user_stream(
+    token: str = Query(..., description="JWT token from query string"),
+    auth_db: AsyncSession = Depends(get_auth_session),
+    db: AsyncSession = Depends(get_db_session),
+) -> User:
+    """
+    Variante de get_active_user específica para SSE (Server-Sent Events).
+    EventSource en el frontend no puede enviar headers de Authorization,
+    por lo que pasamos el token por query param (?token=...).
+    """
+    # 1. Validar token manualmente
+    payload = verify_token(token)
+    if not payload or not payload.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido o expirado",
+        )
+    
+    # 2. Buscar usuario base
+    from oauth2fast_fastapi.models.user_model import User as AuthUser
+    result = await auth_db.execute(select(AuthUser).where(AuthUser.email == payload.get("sub")))
+    user = result.scalars().first()
+    
+    if not user or not user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario no encontrado o no verificado",
+        )
+        
+    # 3. Validar soft-delete (igual que get_active_user)
+    ext_result = await db.execute(
+        select(Users_extend).where(Users_extend.user_id == user.id)
+    )
+    ext = ext_result.scalars().first()
+
+    if ext is not None and ext.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tu cuenta ha sido dada de baja del sistema.",
+        )
+        
+    return user
 
 
 # ── Helper: extensión del usuario actual ──────────────────────────────────────
