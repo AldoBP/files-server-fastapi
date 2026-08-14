@@ -13,4 +13,6 @@ Paquete de sub-módulos para el router de archivos.
                           POST /files/onlyoffice/callback
   search_router.py      — GET  /files/search         (archivos y carpetas)
                           GET  /files/search/users    (usuarios, solo admins)
+  move_copy_router.py   — POST /files/move   (mover uno o varios archivos/carpetas)
+                          POST /files/copy   (copiar uno o varios archivos/carpetas)
 """
