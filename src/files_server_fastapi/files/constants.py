@@ -52,3 +52,18 @@ INLINE_MIME_TYPES = {
     "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
     "text/plain", "text/csv", "text/html",
 }
+
+# ── Roles y Permisos por Defecto ──────────────────────────────────────────────
+# Rol que tiene acceso global a todo el sistema sin checar base de datos
+GLOBAL_ADMIN_ROLE: str = os.getenv("GLOBAL_ADMIN_ROLE", "SUPER_ADMIN")
+# Rol de administrador de un área específica
+AREA_ADMIN_ROLE: str = os.getenv("AREA_ADMIN_ROLE", "AREA_ADMIN")
+
+# Mapeo de permisos por defecto al crear un área. Formato: "ROL:permiso,ROL:permiso"
+_default_perms_str = os.getenv("DEFAULT_AREA_PERMISSIONS", "AREA_ADMIN:web_full,EDITOR:web_edit,VIEWER:web_view")
+DEFAULT_AREA_PERMISSIONS_MAP: dict[str, str] = {}
+if _default_perms_str:
+    for pair in _default_perms_str.split(","):
+        if ":" in pair:
+            r, p = pair.split(":", 1)
+            DEFAULT_AREA_PERMISSIONS_MAP[r.strip()] = p.strip()

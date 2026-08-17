@@ -3,7 +3,7 @@ search_router.py — Motor de búsqueda del sistema de archivos.
 
 Endpoints:
   GET /files/search       — Busca archivos y carpetas accesibles por el usuario.
-  GET /files/search/users — Busca usuarios del área (solo AREA_ADMIN y SUPER_ADMIN).
+  GET /files/search/users — Busca usuarios del área (solo admin de área y global).
 """
 import os
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,7 +15,7 @@ from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import User
 from files_server_fastapi.dependencies.user_dependencies import get_active_user
 
-from files_server_fastapi.files.constants import BASE_DIR
+from files_server_fastapi.files.constants import BASE_DIR, GLOBAL_ADMIN_ROLE, AREA_ADMIN_ROLE
 from files_server_fastapi.files.dependencies import (
     resolve_effective_access,
     _resolve_user_context,
@@ -37,8 +37,8 @@ async def _is_area_admin_or_super(
     db: AsyncSession,
 ) -> bool:
     """
-    Devuelve True si el usuario es SUPER_ADMIN o AREA_ADMIN del área indicada.
-    Si area es None, comprueba solo si es SUPER_ADMIN.
+    Devuelve True si el usuario tiene el rol configurado en GLOBAL_ADMIN_ROLE o AREA_ADMIN_ROLE del área indicada.
+    Si area es None, comprueba solo si es el admin global.
     """
     result_ext = await db.execute(
         select(Users_extend).where(Users_extend.user_id == current_user.id)
@@ -52,10 +52,10 @@ async def _is_area_admin_or_super(
             continue
         role_upper = rol.role_name.upper()
 
-        if role_upper == "SUPER_ADMIN":
+        if role_upper == GLOBAL_ADMIN_ROLE.upper():
             return True
 
-        if role_upper == "AREA_ADMIN" and area:
+        if role_upper == AREA_ADMIN_ROLE.upper() and area:
             res_area = await db.execute(select(Area).where(Area.id == ext.area_id))
             a = res_area.scalars().first()
             if a and a.area_name.upper() == area.upper():
@@ -209,7 +209,7 @@ async def search_files(
             .join(Users_extend, Users_extend.rol_id == Rol.id)
             .where(Users_extend.user_id == current_user.id)
         )
-        if any(r.upper() == "SUPER_ADMIN" for r in res_roles.scalars().all()):
+        if any(r.upper() == GLOBAL_ADMIN_ROLE.upper() for r in res_roles.scalars().all()):
             res_all_areas = await db.execute(select(Area.area_name))
             for a_name in res_all_areas.scalars().all():
                 areas_to_search.add(a_name.upper())
@@ -282,16 +282,16 @@ async def search_files(
 )
 async def search_users(
     q: str = Query(..., min_length=1, description="Nombre o email del usuario a buscar"),
-    area: str = Query(None, description="Filtrar por área (ej: Ventas). Si se omite, busca en todas las áreas (solo SUPER_ADMIN)."),
+    area: str = Query(None, description=f"Filtrar por área (ej: Ventas). Si se omite, busca en todas las áreas (solo {GLOBAL_ADMIN_ROLE})."),
     limit: int = Query(20, ge=1, le=100, description="Número máximo de resultados"),
     current_user: User = Depends(get_active_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
     Busca usuarios por nombre o email.
-    - Solo accesible para SUPER_ADMIN y AREA_ADMIN.
-    - AREA_ADMIN solo puede buscar dentro de su propio área.
-    - SUPER_ADMIN puede buscar en todas las áreas o filtrar por una específica.
+    - Solo accesible para administradores (Global o Área).
+    - El administrador de área solo puede buscar dentro de su propio área.
+    - El administrador global puede buscar en todas las áreas o filtrar por una específica.
     """
     # 1. Verificar que el usuario tiene permisos de administración
     authorized = await _is_area_admin_or_super(current_user, area, db)

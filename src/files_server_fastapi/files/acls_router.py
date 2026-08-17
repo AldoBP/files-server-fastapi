@@ -16,15 +16,20 @@ from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.users_extend_model import Users_extend
 from files_server_fastapi.models.rol_model import Rol
 from files_server_fastapi.notificaciones.service import crear_notificacion
+from files_server_fastapi.files.constants import (
+    GLOBAL_ADMIN_ROLE, 
+    AREA_ADMIN_ROLE, 
+    DEFAULT_AREA_PERMISSIONS_MAP
+)
 
 logger = logging.getLogger(__name__)
 
-_ADMIN_ROLES = frozenset({"SUPER_ADMIN", "AREA_ADMIN"})
+_ADMIN_ROLES = frozenset({GLOBAL_ADMIN_ROLE, AREA_ADMIN_ROLE})
 
 
 async def _require_admin_role(current_user: User, db: AsyncSession) -> None:
     """
-    Lanza HTTP 403 si el usuario autenticado no tiene rol SUPER_ADMIN ni AREA_ADMIN.
+    Lanza HTTP 403 si el usuario autenticado no tiene rol configurado en _ADMIN_ROLES.
     """
     ext_result = await db.execute(
         select(Users_extend).where(Users_extend.user_id == current_user.id)
@@ -39,7 +44,7 @@ async def _require_admin_role(current_user: User, db: AsyncSession) -> None:
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Se requiere rol SUPER_ADMIN o AREA_ADMIN para esta operacion.",
+        detail=f"Se requiere rol {GLOBAL_ADMIN_ROLE} o {AREA_ADMIN_ROLE} para esta operacion.",
     )
 
 router = APIRouter()
@@ -61,10 +66,8 @@ async def _sync_samba_background() -> None:
 
 # ── Mapa: role_name → access_type por defecto ────────────────────────────────
 _ROL_DEFAULT_ACCESS: dict[str, str] = {
-    "SUPER_ADMIN": "web_full",
-    "AREA_ADMIN":  "web_full",
-    "EDITOR":      "web_upload",
-    "VIEWER":      "web_view",
+    GLOBAL_ADMIN_ROLE: "web_full",
+    **DEFAULT_AREA_PERMISSIONS_MAP
 }
 
 
@@ -308,7 +311,7 @@ async def get_specific_user_acls(
     Acepta el auth user_id directamente (el mismo que esta en user_ruta_access.user_id).
     Por compatibilidad tambien acepta users_extend.id si el user_id no se encuentra como auth user_id.
 
-    **Requiere rol SUPER_ADMIN o AREA_ADMIN (excepto si el usuario consulta sus propios permisos).**
+    **Requiere rol de administración global o de área (excepto si el usuario consulta sus propios permisos).**
     """
     if current_user.id != user_id:
         await _require_admin_role(current_user, db)
@@ -370,10 +373,8 @@ async def initialize_user_acl(
     en oauth2fast_fastapi.
 
     Por defecto bloquea todo el área del usuario (deny_all).
-    Si grant_full_area=True, otorga el permiso completo del área según su rol:
-      EDITOR / AREA_ADMIN / SUPER_ADMIN → allow_write
-      VIEWER                            → allow_read
-      Cualquier otro rol no mapeado     → deny_all
+    Si grant_full_area=True, otorga el permiso completo del área según su rol en DEFAULT_AREA_PERMISSIONS.
+    Cualquier otro rol no mapeado     → deny_all
     """
     # 1. Resolver users_extend por auth user_id (el ID real del sistema de autenticación)
     ext_result = await db.execute(select(Users_extend).where(Users_extend.user_id == user_id))

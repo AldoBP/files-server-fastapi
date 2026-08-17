@@ -40,6 +40,7 @@ from files_server_fastapi.models.permisos_model import User_Ruta_Access
 from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.rol_model import Rol
+from files_server_fastapi.files.constants import GLOBAL_ADMIN_ROLE, AREA_ADMIN_ROLE
 
 router = APIRouter(prefix="/samba", tags=["Gestión Samba"])
 
@@ -198,7 +199,7 @@ async def activate_samba(
     - La contraseña se guarda en `users_extend.samba_password`.
     - El admin debe comunicar las credenciales al usuario manualmente.
 
-    **Requiere rol SUPER_ADMIN o AREA_ADMIN.**
+    **Requiere rol de administración global o de área.**
     """
     user_ext, linux_username = await _get_user_ext_and_username(user_ext_id, db)
 
@@ -247,7 +248,7 @@ async def deactivate_samba(
     - Actualiza `samba_enabled=False` en la base de datos.
     - Los ACLs web del usuario no se modifican.
 
-    **Requiere rol SUPER_ADMIN o AREA_ADMIN.**
+    **Requiere rol de administración global o de área.**
     """
     user_ext, linux_username = await _get_user_ext_and_username(user_ext_id, db)
 
@@ -295,7 +296,7 @@ async def get_samba_status(
 
     La contraseña **no se incluye en la respuesta** por seguridad.
 
-    **Requiere rol SUPER_ADMIN o AREA_ADMIN.**
+    **Requiere rol de administración global o de área.**
     """
     user_ext, linux_username = await _get_user_ext_and_username(user_ext_id, db)
 
@@ -343,7 +344,7 @@ async def sync_samba(
 
     El usuario debe tener `samba_enabled=True`. Si no, retorna error 400.
 
-    **Requiere rol SUPER_ADMIN o AREA_ADMIN.**
+    **Requiere rol de administración global o de área.**
     """
     user_ext, linux_username = await _get_user_ext_and_username(user_ext_id, db)
 
@@ -376,7 +377,7 @@ async def reset_samba_password(
     Genera una nueva contraseña aleatoria o usa la proporcionada por el admin,
     la asigna en Samba, y la devuelve en la respuesta.
 
-    **Solo accesible por SUPER_ADMIN (Sistemas).**
+    **Solo accesible por el admin global (Sistemas).**
     """
     user_ext, linux_username = await _get_user_ext_and_username(user_ext_id, db)
 

@@ -10,6 +10,7 @@ from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.users_extend_model import Users_extend
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.rol_model import Rol
+from files_server_fastapi.files.constants import GLOBAL_ADMIN_ROLE
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ async def resolve_effective_access(
         preloaded_acls:    ACLs ya cargados en bulk (optimización para loops).
                            Formato: {ruta_str: User_Ruta_Access}. Si None, se consulta la BD.
     """
-    # SUPER_ADMIN siempre tiene acceso total
+    # GLOBAL_ADMIN_ROLE siempre tiene acceso total
     if is_super_admin:
         return "web_full"
 
@@ -186,7 +187,7 @@ async def _resolve_user_context(
     for ext in user_exts:
         res_rol = await db.execute(select(Rol).where(Rol.id == ext.rol_id))
         rol = res_rol.scalars().first()
-        if rol and rol.role_name.upper() == "SUPER_ADMIN":
+        if rol and rol.role_name.upper() == GLOBAL_ADMIN_ROLE.upper():
             is_super_admin = True
             break
 

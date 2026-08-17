@@ -17,10 +17,10 @@ Propósito:
 Niveles de privilegio (tabla rol.privilege_level):
     0 → Usuario regular     (sin permisos de gestión)
     1 → Admin de Área       (gestión de su propia área)
-    2 → Superadmin/Sistemas (acceso total)
+    2 → Admin Global        (acceso total)
 
 ¿Por qué privilege_level en vez de comparar nombres de rol?
-    Los nombres de rol pueden cambiar ("admin" → "lider", "jefe", etc.).
+    Los nombres de rol pueden cambiar.
     El privilege_level es un contrato estable: el código solo lee el número,
     no el texto. Renombrar un rol en la DB nunca rompe la autorización.
 """
@@ -42,8 +42,8 @@ from files_server_fastapi.models.users_extend_model import Users_extend
 # ── Constantes de nivel de privilegio ────────────────────────────────────────
 # Cambia estos valores SOLO si redefiniste la escala en tu tabla rol.
 PRIVILEGE_USER       = 0  # Usuario regular
-PRIVILEGE_AREA_ADMIN = 1  # Admin de Área
-PRIVILEGE_SUPERADMIN = 2  # Sistemas / Superadmin
+PRIVILEGE_AREA_ADMIN = 1  # Administrador de Área
+PRIVILEGE_SUPERADMIN = 2  # Administrador Global
 
 
 # ── Helper interno ────────────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ async def require_superadmin(
     db: AsyncSession = Depends(get_db_session),
 ) -> tuple[User, Users_extend]:
     """
-    Verifica que el usuario tenga privilege_level >= 2 (Superadmin/Sistemas).
+    Verifica que el usuario tenga privilege_level >= 2 (Administración Global).
 
     Retorna:
         (User, Users_extend) para uso en el endpoint.
@@ -186,7 +186,7 @@ async def require_superadmin(
     if level < PRIVILEGE_SUPERADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo Sistemas/Superadmin puede ejecutar esta acción.",
+            detail="Solo administradores globales pueden ejecutar esta acción.",
         )
 
     return current_user, ext
