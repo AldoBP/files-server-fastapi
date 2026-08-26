@@ -9,6 +9,7 @@ Paquete de sub-módulos para el router de archivos.
   open_url_router.py    — GET  /files/open-url
   download_router.py    — GET  /files/download
   tree_router.py        — GET  /files/tree
+                          GET  /files/tree/children  (lazy loading, un nivel)
   onlyoffice_router.py  — GET  /files/onlyoffice/open
                           POST /files/onlyoffice/callback
   search_router.py      — GET  /files/search         (archivos y carpetas)
