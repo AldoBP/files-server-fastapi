@@ -177,14 +177,8 @@ async def get_user_permissions(user_id: int, auth=Depends(get_active_user), db: 
 # ==========================================
 @router.patch("/{user_id}", response_model=UserExtendResponse, summary="Actualizar datos de extensión de usuario")
 async def update_user_extend(user_id: int, user_ext_update: UserExtendUpdate, auth: tuple = Depends(require_superadmin), db: AsyncSession = Depends(get_db_session)):
-    from sqlmodel import or_
-    
-    # Buscamos por user_id (lo ideal) o por el ID interno del registro (si el frontend se confunde)
-    result = await db.execute(
-        select(Users_extend).where(
-            or_(Users_extend.user_id == user_id, Users_extend.id == user_id)
-        )
-    )
+    # Búsqueda estricta por user_id (Auth ID)
+    result = await db.execute(select(Users_extend).where(Users_extend.user_id == user_id))
     user_ext = result.scalars().first()
 
     if not user_ext:
