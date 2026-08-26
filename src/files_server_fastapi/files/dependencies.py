@@ -5,7 +5,7 @@ from sqlmodel import select, or_
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import User
 from files_server_fastapi.dependencies.user_dependencies import get_active_user
-from files_server_fastapi.models.permisos_model import User_Ruta_Access, Permisos, Permiso_rol
+from files_server_fastapi.models.permisos_model import User_Ruta_Access
 from files_server_fastapi.models.rutas_model import Rutas
 from files_server_fastapi.models.users_extend_model import Users_extend
 from files_server_fastapi.models.area_model import Area
@@ -139,31 +139,7 @@ async def resolve_effective_access(
 
             return effective_type
 
-    # ── Evaluar permisos por rol ─────────────────────────────────────────────
-    if user_ext_in_area:
-        res_role_perms = await db.execute(
-            select(Rutas.ruta, Permisos.fastapi_action)
-            .join(Permiso_rol, Permiso_rol.id_permiso == Permisos.id)
-            .join(Rutas, Rutas.id == Permiso_rol.ruta_id)
-            .where(Permiso_rol.id_rol == user_ext_in_area.rol_id)
-            .where(Rutas.ruta.in_(paths_to_check))
-        )
-        role_perms_map: dict[str, set[str]] = {}
-        for r, p_action in res_role_perms.all():
-            if r not in role_perms_map:
-                role_perms_map[r] = set()
-            role_perms_map[r].add(p_action)
-            
-        logger.debug("ACL-ROLES paths_to_check=%s role_perms_map=%s", paths_to_check, role_perms_map)
-
-        for path_in_tree in paths_to_check:
-            if path_in_tree in role_perms_map:
-                actions = role_perms_map[path_in_tree]
-                for access_type in _ACCESS_PRIORITY:
-                    if access_type in actions:
-                        return access_type
-
-    # Sin regla aplicable
+    # Sin regla aplicable en user_ruta_access
     return None
 
 

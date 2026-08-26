@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from pgsqlasync2fast_fastapi.dependencies import get_db_session
-from files_server_fastapi.models.permisos_model import Permisos, User_Ruta_Access, Permiso_rol
+from files_server_fastapi.models.permisos_model import Permisos, User_Ruta_Access
 from files_server_fastapi.dependencies.user_dependencies import get_active_user, require_superadmin
 
 router = APIRouter(prefix="/permisos", tags=["Gestión de Permisos"])
@@ -46,33 +46,3 @@ async def delete_permiso(permiso_id: int, auth: tuple = Depends(require_superadm
     await db.commit()
     return {"message": "Permiso maestro eliminado"}
 
-# --- Asignaciones Intermedias ---
-@router.post("/asignar-acl", response_model=User_Ruta_Access, summary="Asignar o Denegar acceso a ruta (ACL)")
-async def assign_acl(acl: User_Ruta_Access, auth: tuple = Depends(require_superadmin), db: AsyncSession = Depends(get_db_session)):
-    db.add(acl)
-    await db.commit()
-    await db.refresh(acl)
-    return acl
-
-@router.post("/asignar-rol", response_model=Permiso_rol, summary="Asignar permiso a un Rol")
-async def assign_rol(permiso: Permiso_rol, auth: tuple = Depends(require_superadmin), db: AsyncSession = Depends(get_db_session)):
-    db.add(permiso)
-    await db.commit()
-    await db.refresh(permiso)
-    return permiso
-
-@router.get("/asignaciones-rol", summary="Ver todas las asignaciones de Permisos a Roles")
-async def get_asignaciones_rol(auth=Depends(get_active_user), db: AsyncSession = Depends(get_db_session)):
-    result = await db.execute(select(Permiso_rol))
-    return result.scalars().all()
-
-@router.delete("/asignar-rol/{asignacion_id}", summary="Revocar permiso a un Rol")
-async def revoke_rol_permission(asignacion_id: int, auth: tuple = Depends(require_superadmin), db: AsyncSession = Depends(get_db_session)):
-    result = await db.execute(select(Permiso_rol).where(Permiso_rol.id == asignacion_id))
-    db_asig = result.scalars().first()
-    if not db_asig:
-        return {"detail": "Asignación no encontrada"}
-    
-    await db.delete(db_asig)
-    await db.commit()
-    return {"message": "Permiso revocado del rol"}

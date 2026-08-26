@@ -393,19 +393,32 @@ async def initialize_user_acl(
     if not area_obj:
         raise HTTPException(status_code=404, detail="Área del usuario no encontrada.")
 
-    # 4. Buscar la ruta raíz del área (ruta == area_name en mayúsculas)
+    # 4. Buscar la ruta raíz del área (ruta == area_name en mayúsculas).
+    #    Si no existe, se crea automáticamente para no bloquear el registro de nuevos usuarios.
+    ruta_raiz_path = area_obj.area_name.upper()
     ruta_result = await db.execute(
         select(Rutas)
         .where(Rutas.area_id == user_ext.area_id)
-        .where(Rutas.ruta == area_obj.area_name.upper())
+        .where(Rutas.ruta == ruta_raiz_path)
         .limit(1)
     )
     ruta_raiz = ruta_result.scalars().first()
     if not ruta_raiz:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Ruta raíz del área '{area_obj.area_name}' no encontrada en la tabla rutas.",
+        logger.warning(
+            "initialize_user_acl: ruta raíz '%s' no encontrada para área '%s' (id=%s). "
+            "Creándola automáticamente.",
+            ruta_raiz_path,
+            area_obj.area_name,
+            user_ext.area_id,
         )
+        ruta_raiz = Rutas(
+            ruta=ruta_raiz_path,
+            name=area_obj.area_name,
+            area_id=user_ext.area_id,
+        )
+        db.add(ruta_raiz)
+        await db.commit()
+        await db.refresh(ruta_raiz)
 
     # 5. Determinar el access_type
     access_type = _ROL_DEFAULT_ACCESS.get(rol_name, "deny_all") if grant_full_area else "deny_all"

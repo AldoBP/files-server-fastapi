@@ -12,14 +12,13 @@ from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import User
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.rutas_model import Rutas
-from files_server_fastapi.models.permisos_model import Permisos, Permiso_rol
 from files_server_fastapi.models.rol_model import Rol
 from files_server_fastapi.dependencies.user_dependencies import (
     get_active_user,
     require_superadmin,
     get_current_user_ext,
 )
-from files_server_fastapi.files.constants import BASE_DIR, DEFAULT_AREA_PERMISSIONS_MAP
+from files_server_fastapi.files.constants import BASE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -109,36 +108,6 @@ async def create_area(
         await db.commit()
         await db.refresh(ruta_raiz)
         logger.info("Ruta raíz registrada en BD: ruta=%r area_id=%d", ruta_logica, new_area.id)
-
-        # ── Asignar permisos por defecto a la nueva ruta ────────────────────────
-        if DEFAULT_AREA_PERMISSIONS_MAP:
-            roles_result = await db.execute(
-                select(Rol).where(Rol.role_name.in_(DEFAULT_AREA_PERMISSIONS_MAP.keys()))
-            )
-            roles_dict = {r.role_name: r.id for r in roles_result.scalars().all()}
-
-            permisos_result = await db.execute(
-                select(Permisos).where(Permisos.fastapi_action.in_(DEFAULT_AREA_PERMISSIONS_MAP.values()))
-            )
-            permisos_map = {p.fastapi_action: p.id for p in permisos_result.scalars().all()}
-
-            permisos_a_insertar = []
-            for role_name, action in DEFAULT_AREA_PERMISSIONS_MAP.items():
-                rol_id = roles_dict.get(role_name)
-                permiso_id = permisos_map.get(action)
-                if rol_id and permiso_id:
-                    permisos_a_insertar.append(
-                        Permiso_rol(
-                            id_rol=rol_id,
-                            id_permiso=permiso_id,
-                            ruta_id=ruta_raiz.id
-                        )
-                    )
-
-        if permisos_a_insertar:
-            db.add_all(permisos_a_insertar)
-            await db.commit()
-            logger.info("Permisos por defecto asignados para la nueva área %s", area_data.area_name)
 
     return new_area
 

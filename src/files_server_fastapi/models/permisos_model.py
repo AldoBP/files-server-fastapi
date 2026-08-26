@@ -22,11 +22,3 @@ class User_Ruta_Access(AuthModel, table=True):
     # access_type puede ser: "web_view", "web_edit", "web_upload", "web_full", "deny_all"
     access_type: str = Field(nullable=False)
 
-
-# Tabla intermedia: Permisos por Rol
-class Permiso_rol(AuthModel, table=True):
-    __tablename__ = "permiso_rol"
-    
-    id_rol: int = Field(foreign_key="rol.id")
-    id_permiso: int = Field(foreign_key="permisos.id")
-    ruta_id: int = Field(foreign_key="rutas.id")

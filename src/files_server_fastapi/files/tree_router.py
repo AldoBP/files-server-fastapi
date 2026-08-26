@@ -2,9 +2,7 @@ import os
 import asyncio
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from pgsqlasync2fast_fastapi.dependencies import get_db_session
 from oauth2fast_fastapi import User
 from files_server_fastapi.dependencies.user_dependencies import get_active_user
 from files_server_fastapi.files.constants import BASE_DIR
@@ -97,7 +95,7 @@ async def get_area_tree(area: str):
     area_path = os.path.join(BASE_DIR, area.upper())
     if not os.path.exists(area_path):
         return []
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _get_directory_tree, area_path)
 
 
@@ -111,7 +109,6 @@ async def get_folder_children(
     area: str,
     path: str = "/",
     current_user: User = Depends(get_active_user),
-    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Devuelve **solo los subdirectorios inmediatos** (un nivel) de la carpeta indicada.
@@ -164,7 +161,7 @@ async def get_folder_children(
     )
 
     # Ejecutar el escaneo en un thread pool para no bloquear el event loop
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     children = await loop.run_in_executor(None, _scan_one_level, physical_path)
 
     return children

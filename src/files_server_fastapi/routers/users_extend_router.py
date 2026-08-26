@@ -89,10 +89,26 @@ async def _validate_area_and_rol(area_id: Optional[int], rol_id: Optional[int], 
 # POST /users-extend/ — Vincular usuario
 # ==========================================
 @router.post("/", response_model=Users_extend, status_code=status.HTTP_201_CREATED, summary="Vincular Usuario con Área y Rol")
-async def create_user_extend(user_ext: UserExtendCreate, auth: tuple = Depends(require_superadmin), db: AsyncSession = Depends(get_db_session)):
+async def create_user_extend(
+    user_ext: UserExtendCreate,
+    auth: tuple = Depends(require_area_admin_or_superadmin),
+    db: AsyncSession = Depends(get_db_session),
+):
     """
     Vincula un usuario con un área y rol. Valida que el área y rol existan antes de insertar.
+
+    - Superadmin/Sistemas: puede vincular usuarios a cualquier área.
+    - Admin de Área: solo puede vincular usuarios a su propia área.
     """
+    current_user, executor_ext, is_superadmin = auth
+
+    # Admin de área: solo puede vincular usuarios a su propia área
+    if not is_superadmin and user_ext.area_id != executor_ext.area_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo puedes registrar usuarios en tu propia área.",
+        )
+
     # Verificar que no exista ya una extensión para este usuario
     existing_result = await db.execute(select(Users_extend).where(Users_extend.user_id == user_ext.user_id))
     if existing_result.scalars().first():
