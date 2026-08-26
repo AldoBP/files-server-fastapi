@@ -124,16 +124,16 @@ async def create_area(
 
             permisos_a_insertar = []
             for role_name, action in DEFAULT_AREA_PERMISSIONS_MAP.items():
-            rol_id = roles_dict.get(role_name)
-            permiso_id = permisos_map.get(action)
-            if rol_id and permiso_id:
-                permisos_a_insertar.append(
-                    Permiso_rol(
-                        id_rol=rol_id,
-                        id_permiso=permiso_id,
-                        ruta_id=ruta_raiz.id
+                rol_id = roles_dict.get(role_name)
+                permiso_id = permisos_map.get(action)
+                if rol_id and permiso_id:
+                    permisos_a_insertar.append(
+                        Permiso_rol(
+                            id_rol=rol_id,
+                            id_permiso=permiso_id,
+                            ruta_id=ruta_raiz.id
+                        )
                     )
-                )
 
         if permisos_a_insertar:
             db.add_all(permisos_a_insertar)
