@@ -54,12 +54,17 @@ router = APIRouter()
 # Si no está definida o el archivo no existe (ej: entorno de desarrollo), se omite silenciosamente.
 _SAMBA_SYNC_SCRIPT: str = os.getenv("SAMBA_SYNC_SCRIPT", "")
 
-async def _sync_samba_background() -> None:
+async def _sync_samba_background(user_id: int | None = None) -> None:
     """Lanza el script de sincronización Samba en background sin bloquear la respuesta."""
     if not _SAMBA_SYNC_SCRIPT or not os.path.exists(_SAMBA_SYNC_SCRIPT):
         return
+    
+    args = ["python3", _SAMBA_SYNC_SCRIPT]
+    if user_id:
+        args.extend(["--user-id", str(user_id)])
+        
     await asyncio.create_subprocess_exec(
-        "python3", _SAMBA_SYNC_SCRIPT,
+        *args,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -81,7 +86,7 @@ async def _sync_samba_if_enabled(user_id: int, db: AsyncSession) -> None:
     )
     user_ext = result.scalars().first()
     if user_ext and user_ext.samba_enabled:
-        asyncio.create_task(_sync_samba_background())
+        asyncio.create_task(_sync_samba_background(user_id=user_id))
 
 class AclDetail(BaseModel):
     path: str

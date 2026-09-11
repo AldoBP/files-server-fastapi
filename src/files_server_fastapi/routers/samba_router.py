@@ -65,12 +65,17 @@ def _generate_samba_password(length: int = 16) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-async def _run_samba_sync(script_path: str) -> None:
+async def _run_samba_sync(script_path: str, user_id: int | None = None) -> None:
     """Ejecuta el script de sincronización Samba en background usando sudo."""
     if not script_path or not os.path.exists(script_path):
         return
+    
+    args = ["sudo", "python3", script_path]
+    if user_id:
+        args.extend(["--user-id", str(user_id)])
+        
     await asyncio.create_subprocess_exec(
-        "sudo", "python3", script_path,
+        *args,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -354,7 +359,7 @@ async def sync_samba(
             detail=f"El usuario '{linux_username}' no tiene Samba activo. Actívalo primero con /activate.",
         )
 
-    asyncio.create_task(_run_samba_sync(_SAMBA_SYNC_SCRIPT))
+    asyncio.create_task(_run_samba_sync(_SAMBA_SYNC_SCRIPT, user_id=user_ext.user_id))
 
     return {
         "user_ext_id": user_ext_id,

@@ -12,8 +12,11 @@ from files_server_fastapi.files.dependencies import (
     can_edit,
     can_upload,
 )
-from oauth2fast_fastapi import User
 from files_server_fastapi.dependencies.user_dependencies import get_active_user
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert
+from pgsqlasync2fast_fastapi.dependencies import get_db_session
+from files_server_fastapi.models.user_file_access_model import UserFileAccess
 
 router = APIRouter()
 
@@ -29,6 +32,7 @@ async def get_open_url(
     subpath: str = "/",
     access_type: str = Depends(check_folder_access),
     current_user: User = Depends(get_active_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Devuelve un array **`options`** con las maneras de abrir el archivo según el permiso del usuario.
@@ -65,6 +69,20 @@ async def get_open_url(
 
     if not os.path.isfile(ruta_real):
         raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {safe_filename}")
+
+    # Registrar acceso
+    stmt = insert(UserFileAccess).values(
+        user_id=current_user.id,
+        area=area,
+        subpath=subpath,
+        filename=safe_filename
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=['user_id', 'area', 'subpath', 'filename'],
+        set_={'accessed_at': stmt.excluded.accessed_at}
+    )
+    await db.execute(stmt)
+    await db.commit()
 
     ext = safe_filename.rsplit(".", 1)[-1].lower() if "." in safe_filename else ""
     is_onlyoffice_file = ext in ONLYOFFICE_SUPPORTED_EXTS

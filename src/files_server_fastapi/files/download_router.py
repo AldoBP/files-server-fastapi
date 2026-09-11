@@ -4,6 +4,12 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
 from files_server_fastapi.files.constants import BASE_DIR, INLINE_MIME_TYPES
 from files_server_fastapi.files.dependencies import check_folder_access, can_upload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert
+from pgsqlasync2fast_fastapi.dependencies import get_db_session
+from oauth2fast_fastapi import User
+from files_server_fastapi.dependencies.user_dependencies import get_active_user
+from files_server_fastapi.models.user_file_access_model import UserFileAccess
 
 router = APIRouter()
 
@@ -14,6 +20,8 @@ async def download_file(
     filename: str,
     subpath: str = "/",
     access_type: str = Depends(check_folder_access),
+    current_user: User = Depends(get_active_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Sirve un archivo desde el servidor de archivos.
@@ -46,6 +54,20 @@ async def download_file(
 
     if not os.path.isfile(ruta_real):
         raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {safe_filename}")
+
+    # Registrar acceso
+    stmt = insert(UserFileAccess).values(
+        user_id=current_user.id,
+        area=area,
+        subpath=subpath,
+        filename=safe_filename
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=['user_id', 'area', 'subpath', 'filename'],
+        set_={'accessed_at': stmt.excluded.accessed_at}
+    )
+    await db.execute(stmt)
+    await db.commit()
 
     mime_type, _ = mimetypes.guess_type(safe_filename)
     mime_type = mime_type or "application/octet-stream"
