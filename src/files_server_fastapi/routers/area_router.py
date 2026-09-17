@@ -170,6 +170,8 @@ async def update_area(
     """
     Actualiza parcialmente los datos de un área existente.
     Solo se pueden editar áreas activas (no dadas de baja).
+    Si se cambia el nombre del área, también se renombra la carpeta
+    física en el servidor y se actualizan las rutas asociadas en la BD.
     """
     result = await db.execute(select(Area).where(Area.id == area_id))
     area = result.scalars().first()
@@ -186,7 +188,10 @@ async def update_area(
         )
 
     # Si se quiere cambiar el nombre, verificar que no exista otro con ese nombre
-    if area_update.area_name and area_update.area_name != area.area_name:
+    name_changed = False
+    old_area_name = area.area_name
+    
+    if area_update.area_name and area_update.area_name != old_area_name:
         dup_result = await db.execute(
             select(Area).where(Area.area_name == area_update.area_name, Area.deleted_at.is_(None))
         )
@@ -195,6 +200,40 @@ async def update_area(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Ya existe un área activa con el nombre '{area_update.area_name}'."
             )
+        name_changed = True
+
+    # Realizar el renombrado de carpeta física y actualizar tabla rutas ANTES del commit del área
+    if name_changed:
+        old_folder = old_area_name.upper()
+        new_folder = area_update.area_name.upper()
+        
+        ruta_fisica_old = os.path.join(BASE_DIR, old_folder)
+        ruta_fisica_new = os.path.join(BASE_DIR, new_folder)
+        
+        if os.path.exists(ruta_fisica_old):
+            try:
+                os.rename(ruta_fisica_old, ruta_fisica_new)
+                logger.info("Carpeta renombrada de %s a %s", ruta_fisica_old, ruta_fisica_new)
+            except Exception as e:
+                logger.error("Error renombrando carpeta física de %s a %s: %s", ruta_fisica_old, ruta_fisica_new, e)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"No se pudo renombrar la carpeta física en el servidor: {e}"
+                )
+        else:
+            logger.warning("Carpeta física anterior %s no existe. Se creará la nueva %s", ruta_fisica_old, ruta_fisica_new)
+            os.makedirs(ruta_fisica_new, exist_ok=True)
+            
+        # Actualizar todas las rutas en la tabla `rutas` que pertenecen a esta área
+        rutas_result = await db.execute(select(Rutas).where(Rutas.area_id == area_id))
+        rutas_area = rutas_result.scalars().all()
+        for r in rutas_area:
+            if r.ruta.startswith(old_folder):
+                # Cambiar solo la parte inicial (el directorio raíz del área)
+                r.ruta = new_folder + r.ruta[len(old_folder):]
+            if r.name == old_area_name:
+                r.name = area_update.area_name
+            db.add(r)
 
     update_data = area_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():

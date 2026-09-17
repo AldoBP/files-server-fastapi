@@ -16,6 +16,7 @@ from files_server_fastapi.models.user_trash_model import UserTrash
 from files_server_fastapi.models.users_extend_model import Users_extend
 from files_server_fastapi.models.area_model import Area
 from files_server_fastapi.models.rutas_model import Rutas
+from files_server_fastapi.models.rol_model import Rol
 from sqlalchemy import or_, delete as sql_delete
 
 router = APIRouter()
@@ -32,6 +33,11 @@ async def _get_user_area_name(user_ext: Users_extend, db: AsyncSession) -> str:
     result = await db.execute(select(Area).where(Area.id == user_ext.area_id))
     area_obj = result.scalars().first()
     return area_obj.area_name if area_obj else ""
+
+async def _get_user_privilege(user_ext: Users_extend, db: AsyncSession) -> int:
+    result = await db.execute(select(Rol).where(Rol.id == user_ext.rol_id))
+    rol_obj = result.scalars().first()
+    return rol_obj.privilege_level if rol_obj else 0
 
 @router.post("/trash", summary="Mover elementos a la papelera")
 async def move_to_trash(
@@ -144,6 +150,7 @@ async def restore_from_trash(
     db: AsyncSession = Depends(get_db_session)
 ):
     user_area_name = await _get_user_area_name(user_ext, db)
+    privilege_level = await _get_user_privilege(user_ext, db)
     
     restored_count = 0
     failed_count = 0
@@ -156,10 +163,19 @@ async def restore_from_trash(
             failed_count += 1
             continue
             
-        # Verificar que la papelera pertenece a su área
-        if not user_area_name or trash_item.area.lower() != user_area_name.lower():
-            failed_count += 1
-            continue
+        # Verificar permisos según nivel de privilegio
+        if privilege_level == 2:
+            pass  # Superadmin: puede restaurar todo
+        elif privilege_level == 1:
+            # Admin de Área: solo su área
+            if not user_area_name or trash_item.area.lower() != user_area_name.lower():
+                failed_count += 1
+                continue
+        else:
+            # Usuario regular: solo lo que él mismo borró
+            if trash_item.deleted_by != current_user.id:
+                failed_count += 1
+                continue
             
         safe_subpath = trash_item.original_subpath.strip("/")
         dest_dir = (
@@ -205,16 +221,25 @@ async def list_trash(
     db: AsyncSession = Depends(get_db_session)
 ):
     user_area_name = await _get_user_area_name(user_ext, db)
-    if not user_area_name:
-        return []
-        
-    result = await db.execute(
-        select(UserTrash).where(
-            UserTrash.area.ilike(user_area_name),
-            UserTrash.deleted_at == None,
-            UserTrash.restored_at == None
-        )
+    privilege_level = await _get_user_privilege(user_ext, db)
+    
+    query = select(UserTrash).where(
+        UserTrash.deleted_at == None,
+        UserTrash.restored_at == None
     )
+    
+    if privilege_level == 2:
+        pass  # Superadmin ve todo
+    elif privilege_level == 1:
+        # Admin de área ve toda su área
+        if not user_area_name:
+            return []
+        query = query.where(UserTrash.area.ilike(user_area_name))
+    else:
+        # Usuario regular solo ve lo suyo
+        query = query.where(UserTrash.deleted_by == current_user.id)
+        
+    result = await db.execute(query)
     
     items = result.scalars().all()
     return [

@@ -158,8 +158,7 @@ async def copy_items(
     src_dir = os.path.join(BASE_DIR, req.src_area.upper(), src_subpath_clean) if src_subpath_clean else os.path.join(BASE_DIR, req.src_area.upper())
     dst_dir = os.path.join(BASE_DIR, req.dst_area.upper(), dst_subpath_clean) if dst_subpath_clean else os.path.join(BASE_DIR, req.dst_area.upper())
     
-    if src_dir == dst_dir:
-         return {"results": [], "copied": 0, "failed": 0, "message": "Origen y destino son los mismos"}
+    # Permitimos copiar en el mismo directorio (creará una copia)
 
     # Obtener el area_id del destino por si se copian carpetas
     dst_area_query = await db.execute(select(Area).where(Area.area_name.ilike(req.dst_area)))
@@ -193,6 +192,7 @@ async def copy_items(
     for filename in req.filenames:
         src_path = os.path.join(src_dir, filename)
         dst_path = os.path.join(dst_dir, filename)
+        new_filename = filename
         
         if not os.path.exists(src_path):
             results.append({"filename": filename, "status": "error", "detail": "No existe en origen"})
@@ -200,9 +200,19 @@ async def copy_items(
             continue
 
         if os.path.exists(dst_path):
-            results.append({"filename": filename, "status": "error", "detail": "Ya existe en destino"})
-            failed += 1
-            continue
+            if src_dir == dst_dir:
+                base, ext = os.path.splitext(filename)
+                new_filename = f"{base} - copia{ext}"
+                dst_path = os.path.join(dst_dir, new_filename)
+                counter = 1
+                while os.path.exists(dst_path):
+                    new_filename = f"{base} - copia ({counter}){ext}"
+                    dst_path = os.path.join(dst_dir, new_filename)
+                    counter += 1
+            else:
+                results.append({"filename": filename, "status": "error", "detail": "Ya existe en destino"})
+                failed += 1
+                continue
             
         is_dir = os.path.isdir(src_path)
         
@@ -213,11 +223,11 @@ async def copy_items(
                 shutil.copy2(src_path, dst_path)
                 
             copied += 1
-            results.append({"filename": filename, "status": "ok"})
+            results.append({"filename": new_filename, "status": "ok"})
             
             if is_dir and dst_area_obj:
                 old_logical_path = build_logical_path(req.src_area, req.src_subpath, filename)
-                new_logical_path = build_logical_path(req.dst_area, req.dst_subpath, filename)
+                new_logical_path = build_logical_path(req.dst_area, req.dst_subpath, new_filename)
                 
                 await duplicate_rutas_db(old_logical_path, new_logical_path, dst_area_obj.id)
                 

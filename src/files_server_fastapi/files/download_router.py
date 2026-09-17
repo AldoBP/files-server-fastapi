@@ -55,16 +55,18 @@ async def download_file(
     if not os.path.isfile(ruta_real):
         raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {safe_filename}")
 
+    from sqlalchemy import func
     # Registrar acceso
     stmt = insert(UserFileAccess).values(
         user_id=current_user.id,
         area=area,
         subpath=subpath,
-        filename=safe_filename
+        filename=safe_filename,
+        accessed_at=func.now()
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=['user_id', 'area', 'subpath', 'filename'],
-        set_={'accessed_at': stmt.excluded.accessed_at}
+        set_={'accessed_at': func.now()}
     )
     await db.execute(stmt)
     await db.commit()
