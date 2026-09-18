@@ -310,6 +310,13 @@ def sincronizar_samba(dry_run: bool = False, target_user_id: int | None = None):
         def _smart_acl(action: str, acl_str: str) -> str | None:
             if not acl_str or acl_str in ["---", "-", ""]:
                 return None
+            
+            # Ignoramos el 'r--' de la base de datos para web_edit y forzamos 'rw-'
+            # para que el script de Samba asigne rwX y permita editar en Windows,
+            # manteniendo la BD intacta para la App Web.
+            if action == "web_edit":
+                acl_str = "rw-"
+                
             # Si el permiso NO debe entrar a subcarpetas (ej. view_root), lo dejamos intacto
             if "root" in action.lower():
                 return acl_str
