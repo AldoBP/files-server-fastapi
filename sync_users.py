@@ -68,6 +68,9 @@ BASE_DIR = os.getenv("FILES_BASE_DIR",
 # Solo LOG_FILE es propio de sync_users (no tiene equivalente en el .env base).
 LOG_FILE = os.getenv("SYNC_LOG_FILE", "/var/log/sync_users.log")
 
+if not os.access(os.path.dirname(LOG_FILE), os.W_OK):
+    LOG_FILE = "/tmp/sync_users.log"
+
 # Roles y Permisos Globales (Fallback si no están en BD)
 GLOBAL_ADMIN_ROLE = os.getenv("GLOBAL_ADMIN_ROLE", "SUPER_ADMIN").upper()
 AREA_ADMIN_ROLE = os.getenv("AREA_ADMIN_ROLE", "AREA_ADMIN").upper()
@@ -76,9 +79,9 @@ _default_perms_str = os.getenv("DEFAULT_AREA_PERMISSIONS", "AREA_ADMIN:web_full,
 # Mapeo estático manual para fallbacks (por si la BD de permisos está vacía o usamos fallback de rol)
 _STATIC_ACL_MAP = {
     "web_full": "rwx",
-    "web_upload": "rw-",
-    "web_edit": "rw-",
-    "web_view": "r-x",
+    "web_upload": "rwX",
+    "web_edit": "rwX",
+    "web_view": "r-X",
     "deny_all": None,
 }
 
@@ -168,6 +171,16 @@ QUERY_TODAS_AREAS = "SELECT UPPER(TRIM(area_name)) FROM area;"
 
 
 # ─── Funciones de ACL ─────────────────────────────────────────────────────────
+
+def asegurar_x_en_acl(acl: str | None) -> str | None:
+    """Convierte 'rw-' en 'rwX' o 'r--' en 'r-X' para que los directorios sean navegables."""
+    if not acl or acl in ["---", "-", ""]:
+        return acl
+    # Si tiene lectura o escritura y no tiene x/X explícito, agregar X
+    if "r" in acl or "w" in acl:
+        if "x" not in acl and "X" not in acl:
+            return acl[:2] + "X"
+    return acl
 
 def limpiar_acls_usuario(username: str, base_dir: str, todas_areas: list, dry_run: bool):
     ejecutar(f'setfacl -R -x u:{username} "{base_dir}"', dry_run)
@@ -263,8 +276,12 @@ def aplicar_acl_base(username: str, permisos: str, ruta: str, dry_run: bool) -> 
     if not dry_run and not os.path.isdir(ruta):
         log.warning(f"   ⚠️  Carpeta base no existe en disco, se omite: {ruta}")
         return False
-    ok1 = ejecutar(f'setfacl -R -m u:{username}:{permisos} "{ruta}"', dry_run)
-    ok2 = ejecutar(f'setfacl -R -d -m u:{username}:{permisos} "{ruta}"', dry_run)
+    
+    # Aplicar siempre la X condicional a directorios
+    permisos_dir = asegurar_x_en_acl(permisos)
+    
+    ok1 = ejecutar(f'setfacl -R -m u:{username}:{permisos_dir} "{ruta}"', dry_run)
+    ok2 = ejecutar(f'setfacl -R -d -m u:{username}:{permisos_dir} "{ruta}"', dry_run)
     return ok1 and ok2
 
 
@@ -290,9 +307,17 @@ def sincronizar_samba(dry_run: bool = False, target_user_id: int | None = None):
 
         # Cargar mapeo fastapi_action → linux_acl (dinámico desde la tabla permisos)
         # Incluye automáticamente allow_view ("r-x") y allow_view_root ("r--")
+        def _smart_acl(action: str, acl_str: str) -> str | None:
+            if not acl_str or acl_str in ["---", "-", ""]:
+                return None
+            # Si el permiso NO debe entrar a subcarpetas (ej. view_root), lo dejamos intacto
+            if "root" in action.lower():
+                return acl_str
+            return asegurar_x_en_acl(acl_str)
+
         cursor_config.execute("SELECT fastapi_action, linux_acl FROM permisos;")
         ACCESS_TYPE_MAP = {
-            row[0]: (row[1] if row[1] not in ["---", "-", ""] else None)
+            row[0]: _smart_acl(row[0], row[1])
             for row in cursor_config.fetchall()
         }
         if "deny_all" not in ACCESS_TYPE_MAP:
@@ -433,15 +458,6 @@ def sincronizar_samba(dry_run: bool = False, target_user_id: int | None = None):
             if rutas_usuario:
                 log.info(f"   🗂️  {len(rutas_usuario)} excepción(es) o ruta(s) extra detectadas")
                 ok_granular = aplicar_acl_granular(username, rutas_usuario, carpeta_area, dry_run)
-
-                # ── FIX: garantizar navegación en la raíz del área nativa ──────────
-                # Se aplica DESPUÉS de granulares porque un 'web_view (r--)' sobre
-                # el propio directorio raíz sobreescribiría el bit 'x' necesario.
-                # setfacl sin -R afecta SOLO la carpeta raíz, no sus subcarpetas.
-                if "x" not in permisos and permisos != "---":
-                    ejecutar(f'setfacl -m u:{username}:r-x "{area_root}"', dry_run)
-                    log.info(f"   🔓 r-x restaurado en raíz tras granulares (Samba) → {area_root}")
-                # ───────────────────────────────────────────────────────────────────
 
             if ok_base and ok_granular:
                 procesados += 1
